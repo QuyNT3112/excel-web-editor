@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+venv/
+env/
+ENV/
+
+# Build & Distribution
+build/
+dist/
+*.spec
+exports/
+*.tmp
+temp_*
+
+# OS specific
+Thumbs.db
+.DS_Store

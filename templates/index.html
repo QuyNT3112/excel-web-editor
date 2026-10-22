@@ -1,0 +1,958 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Excel Web Pro - Bản sao Microsoft Excel trực tuyến đầy đủ tính năng: đọc file excel, tính toán công thức hàm SUM, AVERAGE, IF, VLOOKUP..., tạo biểu đồ chuyên nghiệp, xuất file .xlsx trực tiếp.">
+    <title>Excel Web Editor - Excel Web Pro - Trình Quản Lý Bảng Tính Chuyên Nghiệp</title>
+    
+    <!-- Local libraries with CDN fallbacks -->
+    <script src="{{ url_for('static', filename='libs/xlsx.full.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='libs/chart.umd.min.js') }}"></script>
+    <script>
+        // Fallback to CDN if local files failed
+        if (typeof XLSX === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"><\/script>');
+        }
+        if (typeof Chart === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"><\/script>');
+        }
+    </script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Aptos:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+    <!-- Top Application Bar -->
+    <header class="app-topbar">
+        <div class="topbar-left">
+            <div class="excel-brand">
+                <svg class="excel-logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="24" height="24" rx="4" fill="#107C41"/>
+                    <path d="M14 4H7C5.89543 4 5 4.89543 5 6V18C5 19.1046 5.89543 20 7 20H17C18.1046 20 19 19.1046 19 18V9L14 4Z" fill="#185C37"/>
+                    <path d="M14 4V9H19L14 4Z" fill="#33C481"/>
+                    <path d="M7 11L11 15M11 15L15 19M11 15L7 19M11 15L15 11" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <div class="title-wrapper">
+                    <span class="app-name">Excel Web Pro</span>
+                    <input type="text" id="workbook-filename" class="workbook-filename-input" value="Bao_Cao_Kinh_Doanh.xlsx" title="Nhấn để đổi tên file">
+                    <span id="save-badge" class="save-status-badge saved">Đã lưu</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ribbon Tab Headers -->
+        <nav class="ribbon-tabs" id="ribbon-tabs-nav">
+            <button class="ribbon-tab-btn" data-tab="tab-file">Tệp (File)</button>
+            <button class="ribbon-tab-btn active" data-tab="tab-home">Trang chủ (Home)</button>
+            <button class="ribbon-tab-btn" data-tab="tab-insert">Chèn (Insert)</button>
+            <button class="ribbon-tab-btn" data-tab="tab-formulas">Công thức (Formulas)</button>
+            <button class="ribbon-tab-btn" data-tab="tab-data">Dữ liệu (Data)</button>
+            <button class="ribbon-tab-btn" data-tab="tab-view">Xem (View)</button>
+        </nav>
+
+        <div class="topbar-right">
+            <!-- Quick Action Buttons -->
+            <button id="btn-quick-chart" class="btn-quick-action" title="Tạo biểu đồ từ vùng chọn">
+                <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 20V10M12 20V4M6 20v-6"/>
+                </svg>
+                <span>Biểu đồ</span>
+            </button>
+            <button id="btn-quick-import" class="btn-quick-action" title="Mở file Excel/CSV">
+                <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                </svg>
+                <span>Mở Excel</span>
+            </button>
+            
+            <!-- Direct 1-Click Download Button + Options Caret -->
+            <div class="split-btn-group">
+                <button id="btn-quick-export" class="btn-primary-action" title="Nhấn để tải ngay file Excel (.xlsx) về máy tính">
+                    <svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                    </svg>
+                    <span>Xuất .xlsx</span>
+                </button>
+                <div class="dropdown-container">
+                    <button id="btn-export-dropdown-caret" class="btn-primary-action btn-caret-only" title="Tùy chọn xuất khác">&#9662;</button>
+                    <div class="dropdown-menu" id="export-dropdown-menu">
+                        <button id="btn-export-direct" class="dropdown-item">
+                            <span class="item-title">⚡ Tải XLSX trực tiếp (SheetJS)</span>
+                            <span class="item-desc">Tải tức thì về máy đầy đủ công thức & sheet</span>
+                        </button>
+                        <button id="btn-export-server" class="dropdown-item">
+                            <span class="item-title">🖥️ Tải XLSX qua Server (OpenPyXL)</span>
+                            <span class="item-desc">Giữ trọn style, font, màu nền, đường viền</span>
+                        </button>
+                        <button id="btn-export-csv" class="dropdown-item">
+                            <span class="item-title">📄 Tải dạng CSV (.csv)</span>
+                            <span class="item-desc">Tương thích các phần mềm phân tích dữ liệu</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Theme Toggle -->
+            <button id="btn-theme-toggle" class="btn-icon" title="Chuyển đổi giao diện Sáng / Tối">
+                <svg id="theme-icon-sun" class="icon-sm hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                <svg id="theme-icon-moon" class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Ribbon Content Bar -->
+    <div class="ribbon-content-bar">
+        <!-- TAB: FILE -->
+        <div class="ribbon-pane hidden" id="tab-file">
+            <div class="ribbon-group">
+                <button id="btn-file-new" class="ribbon-btn-large">
+                    <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="12" y1="18" x2="12" y2="12"></line>
+                        <line x1="9" y1="15" x2="15" y2="15"></line>
+                    </svg>
+                    <span>Tạo mới (Blank)</span>
+                </button>
+                <button id="btn-file-open" class="ribbon-btn-large">
+                    <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                    </svg>
+                    <span>Mở file Excel</span>
+                </button>
+                <button id="btn-file-save-download" class="ribbon-btn-large" style="color: var(--excel-green);" title="Tải trực tiếp file Excel (.xlsx) này về máy tính">
+                    <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                        <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                        <polyline points="7 3 7 8 15 8"></polyline>
+                    </svg>
+                    <span>Lưu / Tải về (.xlsx)</span>
+                </button>
+                <span class="group-label">Tài liệu</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
+                <button id="btn-template-sales" class="ribbon-btn-large">
+                    <svg class="icon-lg text-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                    </svg>
+                    <span>Mẫu Doanh Thu</span>
+                </button>
+                <button id="btn-template-budget" class="ribbon-btn-large">
+                    <svg class="icon-lg text-blue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                    </svg>
+                    <span>Mẫu Chi Tiêu</span>
+                </button>
+                <button id="btn-template-grades" class="ribbon-btn-large">
+                    <svg class="icon-lg text-purple" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 10v6M2 10l10-5 10 5-10 5z"/>
+                        <path d="M6 12v5c3 3 9 3 12 0v-5"/>
+                    </svg>
+                    <span>Mẫu Bảng Điểm</span>
+                </button>
+                <span class="group-label">Mẫu dựng sẵn (Templates)</span>
+            </div>
+        </div>
+
+        <!-- TAB: HOME -->
+        <div class="ribbon-pane active" id="tab-home">
+            <!-- Undo / Redo -->
+            <div class="ribbon-group compact">
+                <button id="btn-undo" class="ribbon-tool-btn" title="Hoàn tác (Ctrl+Z)" disabled>
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 7v6h6M3 13L9 7M3 13a9 9 0 1 1 2.64 6.36"/>
+                    </svg>
+                </button>
+                <button id="btn-redo" class="ribbon-tool-btn" title="Làm lại (Ctrl+Y)" disabled>
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 7v6h-6M21 13l-6-6M21 13a9 9 0 1 0-2.64 6.36"/>
+                    </svg>
+                </button>
+                <span class="group-label">Lịch sử</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Clipboard -->
+            <div class="ribbon-group">
+                <div class="ribbon-row">
+                    <button id="btn-paste" class="ribbon-tool-btn" title="Dán (Ctrl+V)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+                            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+                        </svg>
+                        <span>Dán</span>
+                    </button>
+                    <button id="btn-cut" class="ribbon-tool-btn" title="Cắt (Ctrl+X)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+                            <line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>
+                        </svg>
+                        <span>Cắt</span>
+                    </button>
+                    <button id="btn-copy" class="ribbon-tool-btn" title="Sao chép (Ctrl+C)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                        <span>Chép</span>
+                    </button>
+                </div>
+                <span class="group-label">Bảng nhớ tạm</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Font -->
+            <div class="ribbon-group">
+                <div class="ribbon-row">
+                    <select id="select-font-family" class="ribbon-select font-family" title="Phông chữ">
+                        <option value="Aptos">Aptos</option>
+                        <option value="Calibri" selected>Calibri</option>
+                        <option value="Arial">Arial</option>
+                        <option value="Inter">Inter</option>
+                        <option value="Segoe UI">Segoe UI</option>
+                        <option value="JetBrains Mono">JetBrains Mono</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                    </select>
+                    <select id="select-font-size" class="ribbon-select font-size" title="Cỡ chữ">
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                        <option value="11" selected>11</option>
+                        <option value="12">12</option>
+                        <option value="14">14</option>
+                        <option value="16">16</option>
+                        <option value="18">18</option>
+                        <option value="20">20</option>
+                        <option value="24">24</option>
+                        <option value="28">28</option>
+                    </select>
+                    <button id="btn-font-increase" class="ribbon-tool-btn icon-only" title="Tăng cỡ chữ">A<sup>+</sup></button>
+                    <button id="btn-font-decrease" class="ribbon-tool-btn icon-only" title="Giảm cỡ chữ">A<sup>-</sup></button>
+                </div>
+                <div class="ribbon-row">
+                    <button id="btn-bold" class="ribbon-tool-btn icon-only" title="In đậm (Ctrl+B)"><b>B</b></button>
+                    <button id="btn-italic" class="ribbon-tool-btn icon-only" title="In nghiêng (Ctrl+I)"><i>I</i></button>
+                    <button id="btn-underline" class="ribbon-tool-btn icon-only" title="Gạch chân (Ctrl+U)"><u>U</u></button>
+                    <button id="btn-strikethrough" class="ribbon-tool-btn icon-only" title="Gạch ngang"><s>S</s></button>
+                    
+                    <!-- Borders Picker -->
+                    <div class="dropdown-container">
+                        <button id="btn-border-menu" class="ribbon-tool-btn icon-only" title="Đường viền ô">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="3" width="18" height="18" rx="1"/>
+                                <line x1="3" y1="12" x2="21" y2="12"/><line x1="12" y1="3" x2="12" y2="21"/>
+                            </svg>
+                        </button>
+                        <div class="dropdown-menu compact" id="border-dropdown">
+                            <button class="dropdown-item" data-border="all">Đóng khung tất cả (All Borders)</button>
+                            <button class="dropdown-item" data-border="outside">Viền ngoài (Outside Border)</button>
+                            <button class="dropdown-item" data-border="thick">Viền ngoài đậm (Thick Box)</button>
+                            <button class="dropdown-item" data-border="bottom">Viền dưới (Bottom Border)</button>
+                            <button class="dropdown-item" data-border="none">Không viền (No Border)</button>
+                        </div>
+                    </div>
+
+                    <!-- Fill Color Picker -->
+                    <div class="color-picker-wrapper" title="Màu nền ô (Fill Color)">
+                        <label for="color-cell-bg" class="color-btn-label">
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M19 11l-8-8-8.5 8.5a2.12 2.12 0 0 0 0 3l5.5 5.5"/>
+                                <path d="M5 2l5 5"/>
+                                <path d="M2 13h15"/>
+                                <path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4z"/>
+                            </svg>
+                            <span id="fill-color-bar" class="color-bar" style="background-color: #ffff00;"></span>
+                        </label>
+                        <input type="color" id="color-cell-bg" value="#ffff00" class="hidden-color-input">
+                    </div>
+
+                    <!-- Text Color Picker -->
+                    <div class="color-picker-wrapper" title="Màu chữ (Font Color)">
+                        <label for="color-cell-text" class="color-btn-label">
+                            <span class="font-a-icon">A</span>
+                            <span id="text-color-bar" class="color-bar" style="background-color: #ff0000;"></span>
+                        </label>
+                        <input type="color" id="color-cell-text" value="#ff0000" class="hidden-color-input">
+                    </div>
+                </div>
+                <span class="group-label">Phông chữ</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Alignment -->
+            <div class="ribbon-group">
+                <div class="ribbon-row">
+                    <button id="btn-valign-top" class="ribbon-tool-btn icon-only" title="Căn trên">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="4" y1="4" x2="20" y2="4"/><rect x="7" y="8" width="10" height="8" rx="1"/>
+                        </svg>
+                    </button>
+                    <button id="btn-valign-middle" class="ribbon-tool-btn icon-only active" title="Căn giữa dọc">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="4" y1="12" x2="20" y2="12"/><rect x="7" y="6" width="10" height="12" rx="1"/>
+                        </svg>
+                    </button>
+                    <button id="btn-valign-bottom" class="ribbon-tool-btn icon-only" title="Căn dưới">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="4" y1="20" x2="20" y2="20"/><rect x="7" y="8" width="10" height="8" rx="1"/>
+                        </svg>
+                    </button>
+                    <button id="btn-wrap-text" class="ribbon-tool-btn" title="Ngắt dòng tự động (Wrap Text)">
+                        <span>Ngắt dòng</span>
+                    </button>
+                </div>
+                <div class="ribbon-row">
+                    <button id="btn-align-left" class="ribbon-tool-btn icon-only" title="Căn trái">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="21" y1="6" x2="3" y2="6"/><line x1="15" y1="12" x2="3" y2="12"/><line x1="17" y1="18" x2="3" y2="18"/>
+                        </svg>
+                    </button>
+                    <button id="btn-align-center" class="ribbon-tool-btn icon-only" title="Căn giữa">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="6"/><line x1="21" y1="12" x2="3" y2="12"/><line x1="18" y1="18" x2="6" y2="18"/>
+                        </svg>
+                    </button>
+                    <button id="btn-align-right" class="ribbon-tool-btn icon-only" title="Căn phải">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="12" x2="9" y2="12"/><line x1="21" y1="18" x2="7" y2="18"/>
+                        </svg>
+                    </button>
+                    <button id="btn-merge-cells" class="ribbon-tool-btn" title="Hợp nhất ô & Căn giữa (Merge & Center)">
+                        <span>Gộp ô</span>
+                    </button>
+                </div>
+                <span class="group-label">Căn chỉnh</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Number Formatting -->
+            <div class="ribbon-group">
+                <div class="ribbon-row">
+                    <select id="select-number-format" class="ribbon-select num-format" title="Định dạng số">
+                        <option value="general">Chung (General)</option>
+                        <option value="number">Số (1,234.56)</option>
+                        <option value="currency-vnd">Tiền tệ (₫ VND)</option>
+                        <option value="currency-usd">Tiền tệ ($ USD)</option>
+                        <option value="percent">Phần trăm (12.5%)</option>
+                        <option value="date">Ngày tháng (DD/MM/YYYY)</option>
+                    </select>
+                </div>
+                <div class="ribbon-row">
+                    <button id="btn-format-currency" class="ribbon-tool-btn icon-only" title="Tiền tệ VND">₫</button>
+                    <button id="btn-format-percent" class="ribbon-tool-btn icon-only" title="Phần trăm">%</button>
+                    <button id="btn-decimal-increase" class="ribbon-tool-btn icon-only" title="Tăng chữ số thập phân">.00&rarr;.000</button>
+                    <button id="btn-decimal-decrease" class="ribbon-tool-btn icon-only" title="Giảm chữ số thập phân">.000&rarr;.00</button>
+                </div>
+                <span class="group-label">Số</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Cells Operations -->
+            <div class="ribbon-group">
+                <div class="ribbon-row">
+                    <button id="btn-insert-row-above" class="ribbon-tool-btn" title="Chèn hàng phía trên">
+                        <span>+ Hàng trên</span>
+                    </button>
+                    <button id="btn-insert-col-left" class="ribbon-tool-btn" title="Chèn cột bên trái">
+                        <span>+ Cột trái</span>
+                    </button>
+                </div>
+                <div class="ribbon-row">
+                    <button id="btn-delete-row-active" class="ribbon-tool-btn btn-danger-soft" title="Xóa hàng hiện tại">
+                        <span>- Xóa hàng</span>
+                    </button>
+                    <button id="btn-delete-col-active" class="ribbon-tool-btn btn-danger-soft" title="Xóa cột hiện tại">
+                        <span>- Xóa cột</span>
+                    </button>
+                    <button id="btn-autofit-rows" class="ribbon-tool-btn" title="Tự động dãn độ cao hàng theo nội dung chữ">
+                        <span>↔ Dãn dòng</span>
+                    </button>
+                </div>
+                <span class="group-label">Ô tính (Cells)</span>
+            </div>
+
+            <div class="ribbon-divider"></div>
+
+            <!-- Editing (AutoSum, Sort, Filter, Find) -->
+            <div class="ribbon-group">
+                <div class="ribbon-row">
+                    <!-- AutoSum Dropdown -->
+                    <div class="dropdown-container">
+                        <button id="btn-autosum-trigger" class="ribbon-tool-btn" title="Tự động tính tổng">
+                            <span class="sigma-symbol">&Sigma;</span>
+                            <span>AutoSum</span>
+                            <span class="dropdown-caret">&#9662;</span>
+                        </button>
+                        <div class="dropdown-menu compact" id="autosum-menu">
+                            <button class="dropdown-item" data-func="SUM">SUM (Tổng)</button>
+                            <button class="dropdown-item" data-func="AVERAGE">AVERAGE (Trung bình)</button>
+                            <button class="dropdown-item" data-func="COUNT">COUNT (Đếm số)</button>
+                            <button class="dropdown-item" data-func="MAX">MAX (Lớn nhất)</button>
+                            <button class="dropdown-item" data-func="MIN">MIN (Nhỏ nhất)</button>
+                        </div>
+                    </div>
+
+                    <button id="btn-filter-toggle" class="ribbon-tool-btn" title="Bật/Tắt bộ lọc">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                        </svg>
+                        <span>Lọc (Filter)</span>
+                    </button>
+                </div>
+                <div class="ribbon-row">
+                    <button id="btn-sort-asc" class="ribbon-tool-btn icon-only" title="Sắp xếp tăng dần A -> Z">
+                        A&rarr;Z
+                    </button>
+                    <button id="btn-sort-desc" class="ribbon-tool-btn icon-only" title="Sắp xếp giảm dần Z -> A">
+                        Z&rarr;A
+                    </button>
+                    <button id="btn-find-replace-open" class="ribbon-tool-btn" title="Tìm kiếm & Thay thế (Ctrl+F)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                        </svg>
+                        <span>Tìm kiếm</span>
+                    </button>
+                    <button id="btn-clear-selection" class="ribbon-tool-btn btn-danger-soft icon-only" title="Xóa nội dung ô đã chọn">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 7l-.867 12.142A2 2 0 0 1 16.138 21H7.862a2 2 0 0 1-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"/>
+                        </svg>
+                    </button>
+                </div>
+                <span class="group-label">Chỉnh sửa</span>
+            </div>
+        </div>
+
+        <!-- TAB: INSERT -->
+        <div class="ribbon-pane hidden" id="tab-insert">
+            <div class="ribbon-group">
+                <div class="chart-type-buttons">
+                    <button class="ribbon-tool-btn btn-insert-chart" data-chart="bar" title="Biểu đồ cột (Column / Bar)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="10" width="4" height="11" rx="1"/>
+                            <rect x="10" y="4" width="4" height="17" rx="1"/>
+                            <rect x="17" y="13" width="4" height="8" rx="1"/>
+                        </svg>
+                        <span>Cột (Column)</span>
+                    </button>
+                    <button class="ribbon-tool-btn btn-insert-chart" data-chart="line" title="Biểu đồ đường (Line)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 18l6-6 4 4 8-10"/>
+                        </svg>
+                        <span>Đường (Line)</span>
+                    </button>
+                    <button class="ribbon-tool-btn btn-insert-chart" data-chart="pie" title="Biểu đồ tròn (Pie)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21.21 15.89A10 10 0 1 1 8 2.83M22 12A10 10 0 0 0 12 2v10z"/>
+                        </svg>
+                        <span>Tròn (Pie)</span>
+                    </button>
+                    <button class="ribbon-tool-btn btn-insert-chart" data-chart="doughnut" title="Biểu đồ vành khuyên (Doughnut)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/>
+                        </svg>
+                        <span>Vành khuyên</span>
+                    </button>
+                    <button class="ribbon-tool-btn btn-insert-chart" data-chart="area" title="Biểu đồ miền (Area)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 18l5-6 6 4 7-9v13H3z"/>
+                        </svg>
+                        <span>Miền (Area)</span>
+                    </button>
+                    <button class="ribbon-tool-btn btn-insert-chart" data-chart="radar" title="Biểu đồ mạng nhện (Radar)">
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="12 2 22 8.5 18 20 6 20 2 8.5 12 2"/>
+                        </svg>
+                        <span>Mạng nhện</span>
+                    </button>
+                </div>
+                <span class="group-label">Biểu đồ chuyên nghiệp (Charts)</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
+                <button id="btn-insert-func-wizard" class="ribbon-btn-large">
+                    <span class="fx-large">fx</span>
+                    <span>Chèn hàm tính</span>
+                </button>
+                <span class="group-label">Hàm tính toán</span>
+            </div>
+        </div>
+
+        <!-- TAB: FORMULAS -->
+        <div class="ribbon-pane hidden" id="tab-formulas">
+            <div class="ribbon-group">
+                <button id="btn-formula-fx" class="ribbon-btn-large">
+                    <span class="fx-large">fx</span>
+                    <span>Chèn hàm (Wizard)</span>
+                </button>
+                <span class="group-label">Hàm tính</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
+                <div class="formula-category-grid">
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=SUM()">SUM</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=AVERAGE()">AVERAGE</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=COUNT()">COUNT</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=IF(, , )">IF</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=VLOOKUP(, , 2, FALSE)">VLOOKUP</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=CONCAT()">CONCAT</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=ROUND(, 2)">ROUND</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=TODAY()">TODAY</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=COUNTIF(, )">COUNTIF</button>
+                    <button class="ribbon-tool-btn btn-quick-formula" data-formula="=SUMIF(, , )">SUMIF</button>
+                </div>
+                <span class="group-label">Hàm phổ biến nhất (Common Functions)</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
+                <button id="btn-recalculate-all" class="ribbon-btn-large">
+                    <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                    </svg>
+                    <span>Tính lại toàn bộ</span>
+                </button>
+                <span class="group-label">Kiểm toán công thức</span>
+            </div>
+        </div>
+
+        <!-- TAB: DATA -->
+        <div class="ribbon-pane hidden" id="tab-data">
+            <div class="ribbon-group">
+                <button id="btn-data-sort-asc" class="ribbon-btn-large">
+                    <span class="sort-icon-lg">A &darr; Z</span>
+                    <span>Tăng dần</span>
+                </button>
+                <button id="btn-data-sort-desc" class="ribbon-btn-large">
+                    <span class="sort-icon-lg">Z &darr; A</span>
+                    <span>Giảm dần</span>
+                </button>
+                <button id="btn-data-filter" class="ribbon-btn-large">
+                    <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                    </svg>
+                    <span>Bật / Tắt Lọc</span>
+                </button>
+                <span class="group-label">Sắp xếp & Lọc</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
+                <button id="btn-data-remove-duplicates" class="ribbon-btn-large">
+                    <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="4" y="4" width="16" height="16" rx="2"/>
+                        <line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/>
+                    </svg>
+                    <span>Xóa hàng trùng lặp</span>
+                </button>
+                <span class="group-label">Công cụ dữ liệu</span>
+            </div>
+        </div>
+
+        <!-- TAB: VIEW -->
+        <div class="ribbon-pane hidden" id="tab-view">
+            <div class="ribbon-group">
+                <label class="ribbon-checkbox-label">
+                    <input type="checkbox" id="chk-gridlines" checked>
+                    <span>Hiện đường lưới (Gridlines)</span>
+                </label>
+                <label class="ribbon-checkbox-label">
+                    <input type="checkbox" id="chk-headings" checked>
+                    <span>Hiện tiêu đề hàng/cột (Headings)</span>
+                </label>
+                <label class="ribbon-checkbox-label">
+                    <input type="checkbox" id="chk-formulabar" checked>
+                    <span>Hiện thanh công thức</span>
+                </label>
+                <span class="group-label">Hiển thị</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
+                <div class="zoom-presets">
+                    <button class="ribbon-tool-btn btn-zoom-preset" data-zoom="75">75%</button>
+                    <button class="ribbon-tool-btn btn-zoom-preset active" data-zoom="100">100%</button>
+                    <button class="ribbon-tool-btn btn-zoom-preset" data-zoom="125">125%</button>
+                    <button class="ribbon-tool-btn btn-zoom-preset" data-zoom="150">150%</button>
+                </div>
+                <span class="group-label">Thu phóng (Zoom)</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
+                <button id="btn-fullscreen-toggle" class="ribbon-btn-large">
+                    <svg class="icon-lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                    </svg>
+                    <span>Toàn màn hình</span>
+                </button>
+                <span class="group-label">Chế độ xem</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Formula Bar -->
+    <div class="formula-bar-container formula-bar" id="formula-bar-container">
+        <!-- Name Box (Cell coordinate e.g. A1, B2:C4) -->
+        <input type="text" id="name-box-input" class="name-box" value="A1" title="Tọa độ ô (Nhập tọa độ & Enter để nhảy tới ô)">
+        
+        <div class="formula-bar-actions">
+            <button id="btn-formula-cancel" class="btn-formula-action" title="Hủy bỏ (Escape)">
+                &times;
+            </button>
+            <button id="btn-formula-confirm" class="btn-formula-action" title="Xác nhận (Enter)">
+                &#10003;
+            </button>
+            <button id="btn-formula-wizard-trigger" class="btn-fx-trigger" title="Mở danh sách hàm (fx)">
+                fx
+            </button>
+        </div>
+
+        <div class="formula-input-wrapper">
+            <input type="text" id="formula-input-field" class="formula-input" placeholder="Nhập văn bản, số hoặc công thức bắt đầu bằng dấu '=' (ví dụ: =SUM(B2:B10))">
+            <!-- Autocomplete suggestions dropdown -->
+            <div id="formula-autocomplete" class="formula-autocomplete hidden"></div>
+        </div>
+    </div>
+
+    <!-- Main Workspace Container -->
+    <main class="spreadsheet-workspace" id="spreadsheet-workspace">
+        <!-- Floating Chart Overlay Canvas Container -->
+        <div id="floating-charts-container" class="floating-charts-container"></div>
+
+        <!-- The Spreadsheet Grid Canvas -->
+        <div class="grid-scroll-viewport" id="grid-scroll-viewport">
+            <div class="grid-table" id="grid-element">
+                <!-- Dynamically generated rows and cells -->
+            </div>
+            <!-- Infinite Rows / Cols Footer Controls -->
+            <div id="grid-infinite-footer" class="grid-infinite-footer">
+                <button id="btn-add-50-rows" class="btn-grid-footer" title="Thêm 50 hàng vào cuối trang tính">
+                    <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <span>Thêm 50 hàng</span>
+                </button>
+                <button id="btn-add-100-rows" class="btn-grid-footer" title="Thêm 100 hàng vào cuối trang tính">
+                    <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <span>Thêm 100 hàng</span>
+                </button>
+                <span class="grid-footer-sep">|</span>
+                <button id="btn-add-10-cols" class="btn-grid-footer" title="Thêm 10 cột mới">
+                    <svg style="width: 14px; height: 14px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <span>Thêm 10 cột</span>
+                </button>
+                <span class="grid-footer-info" id="grid-rows-cols-count">Tổng: 100 hàng × 26 cột (Z)</span>
+            </div>
+        </div>
+
+        <!-- Column Resize Guide Line -->
+        <div id="col-resize-guide" class="resize-guide col hidden"></div>
+        <!-- Row Resize Guide Line -->
+        <div id="row-resize-guide" class="resize-guide row hidden"></div>
+    </main>
+
+    <!-- Bottom Sheet Navigation & Status Bar -->
+    <footer class="app-footer">
+        <div class="sheet-tabs-wrapper sheet-tabs-bar">
+            <div class="sheet-tabs-list" id="sheet-tabs-container">
+                <!-- Dynamically rendered sheet tabs -->
+            </div>
+            <button id="btn-add-sheet" class="btn-add-tab" title="Thêm trang tính mới (+)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Live Selection Statistics -->
+        <div class="status-bar-stats" id="status-bar-stats">
+            <span class="status-mode" id="status-mode-indicator">SẴN SÀNG</span>
+            <div class="stats-items-group" id="stats-items-group">
+                <span class="stat-item" id="stat-avg" title="Giá trị trung bình">Trung bình: <b>-</b></span>
+                <span class="stat-item" id="stat-count" title="Số ô được chọn">Số ô: <b>1</b></span>
+                <span class="stat-item" id="stat-sum" title="Tổng các số">Tổng: <b>-</b></span>
+            </div>
+        </div>
+
+        <!-- Zoom Slider -->
+        <div class="zoom-controls">
+            <button id="btn-zoom-out" class="btn-zoom-step" title="Thu nhỏ (-)">-</button>
+            <input type="range" id="zoom-slider" min="50" max="200" value="100" step="5" class="zoom-slider">
+            <button id="btn-zoom-in" class="btn-zoom-step" title="Phóng to (+)">+</button>
+            <span id="zoom-label" class="zoom-label">100%</span>
+        </div>
+    </footer>
+
+    <!-- Hidden File Input for Excel/CSV import -->
+    <input type="file" id="excel-file-input" accept=".xlsx,.xls,.xlsm,.xltx,.xltm,.csv" class="hidden">
+
+    <!-- Modal: Welcome / File Upload Dropzone -->
+    <div id="upload-modal" class="modal-overlay hidden">
+        <div class="modal-card dropzone-card">
+            <div class="modal-header">
+                <h2>Mở file bảng tính Excel</h2>
+                <button class="btn-close-modal" id="btn-close-upload-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="file-drop-zone" class="file-drop-area">
+                    <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                    </svg>
+                    <h3>Kéo thả file Excel vào đây</h3>
+                    <p>Hỗ trợ định dạng <b>.xlsx</b>, <b>.xls</b>, <b>.csv</b></p>
+                    <button class="btn btn-primary" id="btn-browse-file">Chọn file từ máy tính</button>
+                </div>
+                <div class="templates-quick-pick">
+                    <h4>Hoặc bắt đầu với mẫu chuyên nghiệp:</h4>
+                    <div class="template-chips">
+                        <button class="chip" data-template="sales">📊 Báo cáo Doanh thu</button>
+                        <button class="chip" data-template="budget">💰 Quản lý Chi tiêu</button>
+                        <button class="chip" data-template="grades">🎓 Bảng điểm Sinh viên</button>
+                        <button class="chip" data-template="blank">📄 Bảng tính trắng</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Function Wizard (fx) -->
+    <div id="func-wizard-modal" class="modal-overlay hidden">
+        <div class="modal-card func-wizard-card">
+            <div class="modal-header">
+                <h2>Chèn hàm tính toán (Function Wizard)</h2>
+                <button class="btn-close-modal" id="btn-close-func-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="func-search-box">
+                    <input type="text" id="func-search-input" placeholder="Tìm kiếm hàm (ví dụ: SUM, VLOOKUP, IF...)" class="search-input">
+                    <select id="func-category-select" class="category-select">
+                        <option value="all">Tất cả thể loại</option>
+                        <option value="math">Toán học & Lượng giác</option>
+                        <option value="stat">Thống kê</option>
+                        <option value="logical">Logic</option>
+                        <option value="text">Văn bản</option>
+                        <option value="lookup">Tra cứu & Tham chiếu</option>
+                        <option value="date">Ngày & Giờ</option>
+                    </select>
+                </div>
+                <div class="func-list-container" id="func-list-container">
+                    <!-- Dynamic functions list -->
+                </div>
+                <div class="func-details-panel" id="func-details-panel">
+                    <h3 id="func-detail-name">SUM</h3>
+                    <p id="func-detail-syntax" class="syntax-badge">=SUM(number1, [number2], ...)</p>
+                    <p id="func-detail-desc">Tính tổng tất cả các số trong vùng dữ liệu được chọn.</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-func">Hủy bỏ</button>
+                <button class="btn btn-primary" id="btn-apply-func">Chèn hàm vào ô</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Chart Creator / Editor -->
+    <div id="chart-creator-modal" class="modal-overlay hidden">
+        <div class="modal-card chart-creator-card">
+            <div class="modal-header">
+                <h2>Tạo biểu đồ trực quan (Insert Chart)</h2>
+                <button class="btn-close-modal" id="btn-close-chart-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="chart-config-form">
+                    <div class="form-group">
+                        <label>Vùng dữ liệu (Data Range):</label>
+                        <input type="text" id="chart-range-input" class="form-input" placeholder="ví dụ: A1:C6" value="A1:C6">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Loại biểu đồ:</label>
+                            <select id="chart-type-select" class="form-select">
+                                <option value="bar">Cột thẳng đứng (Bar / Column)</option>
+                                <option value="line">Đường biểu diễn (Line Chart)</option>
+                                <option value="pie">Tròn phân bổ (Pie Chart)</option>
+                                <option value="doughnut">Vành khuyên (Doughnut Chart)</option>
+                                <option value="polarArea">Miền cực (Polar Area)</option>
+                                <option value="radar">Mạng nhện (Radar Chart)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Tiêu đề biểu đồ:</label>
+                            <input type="text" id="chart-title-input" class="form-input" placeholder="Tiêu đề biểu đồ" value="Biểu đồ phân tích số liệu">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Bảng màu chủ đề:</label>
+                            <select id="chart-palette-select" class="form-select">
+                                <option value="emerald">Office Emerald (Xanh lục ngọc)</option>
+                                <option value="modern">Modern Sunset (Vibrant Cam - Xanh)</option>
+                                <option value="neon">Cyberpunk Neon (Rực rỡ)</option>
+                                <option value="pastel">Pastel Nhã nhặn</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Dòng đầu tiên là tiêu đề cột:</label>
+                            <div class="toggle-switch-wrapper">
+                                <input type="checkbox" id="chart-first-row-header" checked>
+                                <label for="chart-first-row-header">Sử dụng hàng 1 làm tiêu đề</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-preview-container">
+                    <h4>Xem trước biểu đồ:</h4>
+                    <div class="chart-canvas-wrapper">
+                        <canvas id="chart-preview-canvas"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-cancel-chart">Hủy</button>
+                <button class="btn btn-primary" id="btn-create-chart-confirm">Chèn biểu đồ vào bảng tính</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Find & Replace -->
+    <div id="find-replace-modal" class="modal-overlay hidden">
+        <div class="modal-card compact-dialog">
+            <div class="modal-header">
+                <h2>Tìm kiếm & Thay thế</h2>
+                <button class="btn-close-modal" id="btn-close-find-modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Tìm kiếm (Find):</label>
+                    <input type="text" id="find-search-input" class="form-input" placeholder="Nội dung cần tìm...">
+                </div>
+                <div class="form-group">
+                    <label>Thay thế bằng (Replace with):</label>
+                    <input type="text" id="find-replace-input" class="form-input" placeholder="Nội dung thay thế...">
+                </div>
+                <div class="form-check">
+                    <input type="checkbox" id="find-match-case">
+                    <label for="find-match-case">Phân biệt chữ hoa/thường (Match case)</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-find-next">Tìm tiếp theo</button>
+                <button class="btn btn-secondary" id="btn-replace-one">Thay thế</button>
+                <button class="btn btn-primary" id="btn-replace-all">Thay thế tất cả</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Column Filter Dropdown Popover -->
+    <div id="filter-popover" class="filter-popover hidden">
+        <div class="filter-popover-header">
+            <span id="filter-col-title">Lọc cột A</span>
+            <button id="btn-close-filter" class="btn-close-sm">&times;</button>
+        </div>
+        <div class="filter-sort-actions">
+            <button id="btn-filter-sort-asc" class="btn-filter-sort">Sắp xếp từ A đến Z</button>
+            <button id="btn-filter-sort-desc" class="btn-filter-sort">Sắp xếp từ Z đến A</button>
+        </div>
+        <div class="filter-divider"></div>
+        <div class="filter-search-box">
+            <input type="text" id="filter-search-input" placeholder="Tìm giá trị..." class="filter-search">
+        </div>
+        <div class="filter-items-list" id="filter-items-list">
+            <!-- Dynamic checkboxes for distinct values -->
+        </div>
+        <div class="filter-popover-footer">
+            <button id="btn-filter-clear" class="btn btn-sm btn-secondary">Bỏ lọc</button>
+            <button id="btn-filter-apply" class="btn btn-sm btn-primary">Áp dụng</button>
+        </div>
+    </div>
+
+    <!-- Context Menu for Right-Click -->
+    <div id="grid-context-menu" class="context-menu hidden">
+        <button class="context-menu-item" id="ctx-cut">
+            <span class="ctx-icon">&#9986;</span> Cắt (Cut) <span class="ctx-shortcut">Ctrl+X</span>
+        </button>
+        <button class="context-menu-item" id="ctx-copy">
+            <span class="ctx-icon">&#128203;</span> Sao chép (Copy) <span class="ctx-shortcut">Ctrl+C</span>
+        </button>
+        <button class="context-menu-item" id="ctx-paste">
+            <span class="ctx-icon">&#128203;</span> Dán (Paste) <span class="ctx-shortcut">Ctrl+V</span>
+        </button>
+        <div class="context-menu-divider"></div>
+        <button class="context-menu-item" id="ctx-insert-row">
+            <span class="ctx-icon">+</span> Chèn hàng ở đây
+        </button>
+        <button class="context-menu-item" id="ctx-insert-col">
+            <span class="ctx-icon">+</span> Chèn cột ở đây
+        </button>
+        <button class="context-menu-item" id="ctx-delete-row">
+            <span class="ctx-icon">-</span> Xóa hàng này
+        </button>
+        <button class="context-menu-item" id="ctx-delete-col">
+            <span class="ctx-icon">-</span> Xóa cột này
+        </button>
+        <div class="context-menu-divider"></div>
+        <button class="context-menu-item" id="ctx-create-chart">
+            <span class="ctx-icon">&#128202;</span> Tạo biểu đồ từ vùng chọn
+        </button>
+        <button class="context-menu-item" id="ctx-clear">
+            <span class="ctx-icon">&#128465;</span> Xóa nội dung
+        </button>
+    </div>
+
+    <!-- Sheet Tab Context Menu -->
+    <div id="tab-context-menu" class="context-menu hidden">
+        <button class="context-menu-item" id="ctx-tab-rename">Đổi tên trang tính</button>
+        <button class="context-menu-item" id="ctx-tab-duplicate">Nhân bản (Duplicate)</button>
+        <div class="context-menu-divider"></div>
+        <button class="context-menu-item text-danger" id="ctx-tab-delete">Xóa trang tính</button>
+    </div>
+
+    <!-- Modal: Confirm Delete Sheet -->
+    <div id="delete-sheet-modal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width: 440px;">
+            <div class="modal-header">
+                <div class="modal-title" style="color: #ef4444; display: flex; align-items: center; gap: 8px;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 20px; height: 20px;">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                    </svg>
+                    Xác nhận xóa trang tính
+                </div>
+                <button class="btn-close-modal" id="btn-close-delete-sheet-modal">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 16px 20px;">
+                <p id="delete-sheet-modal-msg" style="margin-bottom: 8px; font-size: 14px; line-height: 1.5; color: var(--text-primary);"></p>
+                <p style="font-size: 12px; color: var(--text-muted); margin: 0;">Mẹo: Bạn có thể hoàn tác lại thao tác xóa bất kỳ lúc nào bằng phím tắt <b>Ctrl+Z</b>.</p>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding: 12px 20px;">
+                <button class="btn btn-secondary" id="btn-cancel-delete-sheet">Hủy bỏ</button>
+                <button class="btn" id="btn-confirm-delete-sheet" style="background: #ef4444; color: #fff; border: none; font-weight: 600;">Xóa trang tính</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay hidden">
+        <div class="loading-spinner-box">
+            <div class="spinner"></div>
+            <span id="loading-message">Đang xử lý dữ liệu bảng tính...</span>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
