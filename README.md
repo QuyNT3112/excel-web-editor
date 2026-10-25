@@ -51,11 +51,22 @@
 pip install -r requirements.txt
 ```
 
-### Khởi Chạy Ứng Dụng
+### Khởi Chạy Bản Web (Trình duyệt)
 ```bash
 python app.py
 ```
 Ứng dụng sẽ tự động mở trên trình duyệt tại: `http://127.0.0.1:5000`
+
+### Khởi Chạy Bản Desktop (Cửa sổ độc lập như Excel)
+```bash
+python desktop_app.py
+```
+
+### Đóng Gói Thành File .EXE Độc Lập (Windows)
+```bash
+python -m PyInstaller --noconsole --onefile --name "ExcelWebPro" --icon "app_icon.ico" --add-data "templates;templates" --add-data "static;static" --add-data "app_icon.ico;." --collect-all webview --collect-all clr_loader --collect-all pythonnet --collect-all openpyxl --collect-all jinja2 --hidden-import "webview.platforms.winforms" --hidden-import "webview.platforms.edgechromium" --hidden-import "clr" desktop_app.py
+```
+File `ExcelWebPro.exe` sau khi đóng gói sẽ nằm trong thư mục `dist/`.
 
 ---
 
@@ -63,10 +74,14 @@ python app.py
 ```
 excel-web-editor/
 ├── app.py                # Backend Flask xử lý đọc/xuất file Excel (OpenPyXL)
-├── requirements.txt      # Thư viện phụ thuộc (Flask, openpyxl)
+├── desktop_app.py        # Trình khởi chạy Desktop Window qua Microsoft Edge WebView2
+├── app_icon.ico          # Icon chuẩn màu xanh Excel cho ứng dụng
+├── create_icon.py        # Kịch bản tạo icon đa độ phân giải
+├── requirements.txt      # Thư viện phụ thuộc (Flask, openpyxl, pywebview, pyinstaller)
 ├── static/
 │   ├── app.js            # Core logic bảng tính, công thức, phím tắt, giao diện
 │   ├── styles.css        # Giao diện Fluent UI hiện đại, Dark/Light mode
+│   ├── favicon.ico       # Favicon tab trình duyệt
 │   └── libs/             # Thư viện SheetJS & Chart.js offline
 └── templates/
     └── index.html        # Khung giao diện HTML5 chuẩn SEO

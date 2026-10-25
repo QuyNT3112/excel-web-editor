@@ -6,8 +6,20 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import webbrowser
 import threading
+import sys
 
-app = Flask(__name__)
+if getattr(sys, 'frozen', False):
+    bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    app = Flask(
+        __name__,
+        template_folder=os.path.join(bundle_dir, 'templates'),
+        static_folder=os.path.join(bundle_dir, 'static')
+    )
+    base_dir = os.path.dirname(sys.executable)
+else:
+    app = Flask(__name__)
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32MB file limit
 
 @app.route('/')
@@ -129,7 +141,7 @@ def upload_file():
     except Exception as e:
         return jsonify({'error': f'Failed to process file: {str(e)}'}), 500
 
-EXPORT_DIR = os.path.join(os.path.dirname(__file__), 'exports')
+EXPORT_DIR = os.path.join(base_dir, 'exports')
 os.makedirs(EXPORT_DIR, exist_ok=True)
 
 def generate_openpyxl_workbook(data):
