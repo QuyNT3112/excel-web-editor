@@ -40,7 +40,7 @@ def index():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok', 'app': 'Excel Web Pro', 'version': '2.0.0'})
+    return jsonify({'status': 'ok', 'app': 'Excel Web Pro', 'version': '2.1.0'})
 
 def get_target_file_from_args():
     if len(sys.argv) <= 1:
@@ -101,6 +101,7 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
             'sheets': {'Sheet1': padded_data},
             'styles': {},
             'colWidths': {},
+            'merges': {},
             'sheetNames': ['Sheet1']
         }
 
@@ -132,6 +133,7 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
     styles = {}
     col_widths = {}
     images = {}
+    merges = {}
     import base64
     import time
     
@@ -144,6 +146,13 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
         
         data_matrix = []
         sheet_styles = {}
+        
+        # Extract merged cells from worksheet
+        sheet_merges = []
+        if hasattr(ws, 'merged_cells') and ws.merged_cells:
+            for m in list(ws.merged_cells.ranges):
+                sheet_merges.append(str(m))
+        merges[sheet_name] = sheet_merges
         
         if actual_rows > 0 and actual_cols > 0:
             for r_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=actual_rows, min_col=1, max_col=actual_cols)):
@@ -243,6 +252,7 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
         'sheets': sheets,
         'styles': styles,
         'colWidths': col_widths,
+        'merges': merges,
         'images': images,
         'sheetNames': wb.sheetnames
     }
@@ -428,9 +438,22 @@ def generate_openpyxl_workbook(data):
         if sheet_name in merges_data:
             for merge_range in merges_data[sheet_name]:
                 try:
-                    ws.merge_cells(merge_range)
-                except Exception:
-                    pass
+                    if isinstance(merge_range, str):
+                        ws.merge_cells(merge_range)
+                    elif isinstance(merge_range, dict) and 's' in merge_range and 'e' in merge_range:
+                        sr = merge_range['s']['r'] + 1
+                        sc = merge_range['s']['c'] + 1
+                        er = merge_range['e']['r'] + 1
+                        ec = merge_range['e']['c'] + 1
+                        ws.merge_cells(start_row=sr, start_column=sc, end_row=er, end_column=ec)
+                    elif isinstance(merge_range, dict) and 'startRow' in merge_range:
+                        sr = merge_range['startRow'] + 1
+                        sc = merge_range['startCol'] + 1
+                        er = merge_range['endRow'] + 1
+                        ec = merge_range['endCol'] + 1
+                        ws.merge_cells(start_row=sr, start_column=sc, end_row=er, end_column=ec)
+                except Exception as me:
+                    print(f"[Warn] merge_cells failed for {merge_range}: {me}")
 
         # Embed images if provided
         images_data = data.get('images', {})

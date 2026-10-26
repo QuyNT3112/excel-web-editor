@@ -329,6 +329,308 @@ function cellToString(val) {
     return String(val);
 }
 
+// ==========================================================================
+// Merged Cells Management (Merge & Center / Unmerge)
+// ==========================================================================
+let _activeMergesIndex = null;
+
+function normalizeRange(r) {
+    if (!r) return null;
+    if (typeof r === "string") {
+        return parseRange(r);
+    }
+    if (r.s && r.e) {
+        return {
+            startRow: Math.min(r.s.r, r.e.r),
+            startCol: Math.min(r.s.c, r.e.c),
+            endRow: Math.max(r.s.r, r.e.r),
+            endCol: Math.max(r.s.c, r.e.c)
+        };
+    }
+    if (r.startRow !== undefined && r.startCol !== undefined) {
+        return {
+            startRow: Math.min(r.startRow, r.endRow !== undefined ? r.endRow : r.startRow),
+            startCol: Math.min(r.startCol, r.endCol !== undefined ? r.endCol : r.startCol),
+            endRow: Math.max(r.startRow, r.endRow !== undefined ? r.endRow : r.startRow),
+            endCol: Math.max(r.startCol, r.endCol !== undefined ? r.endCol : r.startCol)
+        };
+    }
+    return null;
+}
+
+function getActiveSheetMerges() {
+    if (!appState.merges) appState.merges = {};
+    if (!appState.merges[appState.activeSheetName]) {
+        appState.merges[appState.activeSheetName] = [];
+    }
+    return appState.merges[appState.activeSheetName];
+}
+
+function buildMergesIndex(sheetName = appState.activeSheetName) {
+    const map = new Map();
+    const list = (appState.merges && appState.merges[sheetName]) || [];
+    for (const item of list) {
+        const norm = normalizeRange(item);
+        if (!norm) continue;
+        const rangeStr = coordToA1(norm.startRow, norm.startCol) + ":" + coordToA1(norm.endRow, norm.endCol);
+        const info = {
+            raw: item,
+            rangeStr,
+            startRow: norm.startRow,
+            startCol: norm.startCol,
+            endRow: norm.endRow,
+            endCol: norm.endCol
+        };
+        for (let r = norm.startRow; r <= norm.endRow; r++) {
+            for (let c = norm.startCol; c <= norm.endCol; c++) {
+                map.set(`${r},${c}`, {
+                    ...info,
+                    isMaster: (r === norm.startRow && c === norm.startCol)
+                });
+            }
+        }
+    }
+    return map;
+}
+
+function findMergeForCell(r, c, sheetName = appState.activeSheetName) {
+    if (sheetName === appState.activeSheetName && _activeMergesIndex) {
+        return _activeMergesIndex.get(`${r},${c}`) || null;
+    }
+    const list = (appState.merges && appState.merges[sheetName]) || [];
+    for (const item of list) {
+        const norm = normalizeRange(item);
+        if (!norm) continue;
+        if (r >= norm.startRow && r <= norm.endRow && c >= norm.startCol && c <= norm.endCol) {
+            const rangeStr = coordToA1(norm.startRow, norm.startCol) + ":" + coordToA1(norm.endRow, norm.endCol);
+            return {
+                raw: item,
+                rangeStr,
+                startRow: norm.startRow,
+                startCol: norm.startCol,
+                endRow: norm.endRow,
+                endCol: norm.endCol,
+                isMaster: (r === norm.startRow && c === norm.startCol)
+            };
+        }
+    }
+    return null;
+}
+
+function rangesOverlap(r1, r2) {
+    return !(
+        r1.endRow < r2.startRow ||
+        r1.startRow > r2.endRow ||
+        r1.endCol < r2.startCol ||
+        r1.startCol > r2.endCol
+    );
+}
+
+function updateMergeButtonState() {
+    const btn = document.getElementById("btn-merge-cells");
+    const ctxText = document.getElementById("ctx-merge-text");
+    const { startRow, startCol, endRow, endCol } = appState.selectionRange;
+    const merge = findMergeForCell(startRow, startCol);
+    const isSingleCell = (startRow === endRow && startCol === endCol);
+    const isMerged = !!(merge && (
+        isSingleCell ||
+        (merge.startRow === startRow && merge.startCol === startCol && merge.endRow === endRow && merge.endCol === endCol)
+    ));
+
+    if (btn) {
+        if (isMerged) {
+            btn.classList.add("active");
+            btn.setAttribute("title", "Hủy gộp ô (Unmerge Cells)");
+        } else {
+            btn.classList.remove("active");
+            btn.setAttribute("title", "Hợp nhất ô & Căn giữa (Merge & Center)");
+        }
+    }
+    if (ctxText) {
+        ctxText.textContent = isMerged ? "Hủy gộp ô (Unmerge)" : "Gộp ô & Căn giữa (Merge & Center)";
+    }
+}
+
+function toggleMergeCells() {
+    if (appState.isEditing) commitInlineEdit();
+
+    const { startRow, startCol, endRow, endCol } = appState.selectionRange;
+    const sheetName = appState.activeSheetName;
+    const currentMerges = getActiveSheetMerges();
+    const isSingleCellSelected = (startRow === endRow && startCol === endCol);
+
+    // 1. If currently inside an existing merge -> UNMERGE
+    const existingMerge = findMergeForCell(startRow, startCol, sheetName);
+    if (existingMerge) {
+        const isExactMatch = (
+            existingMerge.startRow === startRow &&
+            existingMerge.startCol === startCol &&
+            existingMerge.endRow === endRow &&
+            existingMerge.endCol === endCol
+        );
+
+        if (isSingleCellSelected || isExactMatch) {
+            pushHistory();
+            const idx = currentMerges.findIndex(m => {
+                const norm = normalizeRange(m);
+                return norm && norm.startRow === existingMerge.startRow && norm.startCol === existingMerge.startCol &&
+                               norm.endRow === existingMerge.endRow && norm.endCol === existingMerge.endCol;
+            });
+            if (idx !== -1) {
+                currentMerges.splice(idx, 1);
+            }
+            renderGrid();
+            selectCell(existingMerge.startRow, existingMerge.startCol);
+            showToast("Đã hủy gộp ô thành công", "info");
+            return;
+        }
+    }
+
+    // 2. If single cell and not merged, require selecting at least 2 cells
+    if (isSingleCellSelected) {
+        showToast("Vui lòng kéo chọn từ 2 ô trở lên để thực hiện gộp ô.", "warning");
+        return;
+    }
+
+    // 3. Multi-cell selection -> MERGE & CENTER
+    pushHistory();
+
+    const newNorm = {
+        startRow: Math.min(startRow, endRow),
+        startCol: Math.min(startCol, endCol),
+        endRow: Math.max(startRow, endRow),
+        endCol: Math.max(startCol, endCol)
+    };
+
+    // Remove any overlapping merges
+    for (let i = currentMerges.length - 1; i >= 0; i--) {
+        const norm = normalizeRange(currentMerges[i]);
+        if (norm && rangesOverlap(norm, newNorm)) {
+            currentMerges.splice(i, 1);
+        }
+    }
+
+    // Value handling: keep master value, clear other cells
+    const sheetData = appState.sheets[sheetName];
+    if (sheetData) {
+        let masterVal = sheetData[newNorm.startRow] ? sheetData[newNorm.startRow][newNorm.startCol] : "";
+        if (masterVal === "" || masterVal === null || masterVal === undefined) {
+            findLoop: for (let r = newNorm.startRow; r <= newNorm.endRow; r++) {
+                for (let c = newNorm.startCol; c <= newNorm.endCol; c++) {
+                    const v = sheetData[r] ? sheetData[r][c] : "";
+                    if (v !== "" && v !== null && v !== undefined) {
+                        masterVal = v;
+                        break findLoop;
+                    }
+                }
+            }
+        }
+
+        for (let r = newNorm.startRow; r <= newNorm.endRow; r++) {
+            for (let c = newNorm.startCol; c <= newNorm.endCol; c++) {
+                if (r === newNorm.startRow && c === newNorm.startCol) {
+                    sheetData[r][c] = masterVal;
+                } else {
+                    if (sheetData[r]) sheetData[r][c] = "";
+                }
+            }
+        }
+    }
+
+    // Apply "Center & Middle" alignment (Merge & Center standard)
+    if (!appState.styles[sheetName]) appState.styles[sheetName] = {};
+    const sheetStyles = appState.styles[sheetName];
+    const masterKey = `${newNorm.startRow},${newNorm.startCol}`;
+    if (!sheetStyles[masterKey]) sheetStyles[masterKey] = {};
+    sheetStyles[masterKey].align = "center";
+    sheetStyles[masterKey].valign = "middle";
+
+    const rangeStr = coordToA1(newNorm.startRow, newNorm.startCol) + ":" + coordToA1(newNorm.endRow, newNorm.endCol);
+    currentMerges.push(rangeStr);
+
+    renderGrid();
+    selectCell(newNorm.startRow, newNorm.startCol);
+    showToast(`Đã gộp ô ${rangeStr} & căn giữa thành công!`, "success");
+}
+
+function shiftMergesOnRowInsert(sheetName, rowIdx) {
+    const list = (appState.merges && appState.merges[sheetName]) || [];
+    const updated = [];
+    for (const m of list) {
+        const norm = normalizeRange(m);
+        if (!norm) continue;
+        if (norm.startRow >= rowIdx) {
+            norm.startRow++;
+            norm.endRow++;
+        } else if (norm.endRow >= rowIdx) {
+            norm.endRow++;
+        }
+        updated.push(coordToA1(norm.startRow, norm.startCol) + ":" + coordToA1(norm.endRow, norm.endCol));
+    }
+    appState.merges[sheetName] = updated;
+}
+
+function shiftMergesOnColInsert(sheetName, colIdx) {
+    const list = (appState.merges && appState.merges[sheetName]) || [];
+    const updated = [];
+    for (const m of list) {
+        const norm = normalizeRange(m);
+        if (!norm) continue;
+        if (norm.startCol >= colIdx) {
+            norm.startCol++;
+            norm.endCol++;
+        } else if (norm.endCol >= colIdx) {
+            norm.endCol++;
+        }
+        updated.push(coordToA1(norm.startRow, norm.startCol) + ":" + coordToA1(norm.endRow, norm.endCol));
+    }
+    appState.merges[sheetName] = updated;
+}
+
+function shiftMergesOnRowDelete(sheetName, rowIdx) {
+    const list = (appState.merges && appState.merges[sheetName]) || [];
+    const updated = [];
+    for (const m of list) {
+        const norm = normalizeRange(m);
+        if (!norm) continue;
+        if (norm.startRow === rowIdx && norm.endRow === rowIdx) {
+            continue;
+        }
+        if (norm.startRow > rowIdx) {
+            norm.startRow--;
+            norm.endRow--;
+        } else if (norm.endRow >= rowIdx) {
+            norm.endRow--;
+        }
+        if (norm.startRow <= norm.endRow && norm.startCol <= norm.endCol && (norm.startRow < norm.endRow || norm.startCol < norm.endCol)) {
+            updated.push(coordToA1(norm.startRow, norm.startCol) + ":" + coordToA1(norm.endRow, norm.endCol));
+        }
+    }
+    appState.merges[sheetName] = updated;
+}
+
+function shiftMergesOnColDelete(sheetName, colIdx) {
+    const list = (appState.merges && appState.merges[sheetName]) || [];
+    const updated = [];
+    for (const m of list) {
+        const norm = normalizeRange(m);
+        if (!norm) continue;
+        if (norm.startCol === colIdx && norm.endCol === colIdx) {
+            continue;
+        }
+        if (norm.startCol > colIdx) {
+            norm.startCol--;
+            norm.endCol--;
+        } else if (norm.endCol >= colIdx) {
+            norm.endCol--;
+        }
+        if (norm.startRow <= norm.endRow && norm.startCol <= norm.endCol && (norm.startRow < norm.endRow || norm.startCol < norm.endCol)) {
+            updated.push(coordToA1(norm.startRow, norm.startCol) + ":" + coordToA1(norm.endRow, norm.endCol));
+        }
+    }
+    appState.merges[sheetName] = updated;
+}
+
 function showToast(message, type = "info") {
     const container = document.getElementById("toast-container");
     const toast = document.createElement("div");
@@ -359,6 +661,7 @@ function pushHistory() {
         styles: JSON.parse(JSON.stringify(appState.styles)),
         colWidths: JSON.parse(JSON.stringify(appState.colWidths)),
         rowHeights: JSON.parse(JSON.stringify(appState.rowHeights)),
+        merges: JSON.parse(JSON.stringify(appState.merges || {})),
         images: JSON.parse(JSON.stringify(appState.images || {})),
         filters: JSON.parse(JSON.stringify(appState.filters || {})),
         activeSheetName: appState.activeSheetName
@@ -377,6 +680,7 @@ function undo() {
         styles: JSON.parse(JSON.stringify(appState.styles)),
         colWidths: JSON.parse(JSON.stringify(appState.colWidths)),
         rowHeights: JSON.parse(JSON.stringify(appState.rowHeights)),
+        merges: JSON.parse(JSON.stringify(appState.merges || {})),
         images: JSON.parse(JSON.stringify(appState.images || {})),
         filters: JSON.parse(JSON.stringify(appState.filters || {})),
         activeSheetName: appState.activeSheetName
@@ -395,6 +699,7 @@ function redo() {
         styles: JSON.parse(JSON.stringify(appState.styles)),
         colWidths: JSON.parse(JSON.stringify(appState.colWidths)),
         rowHeights: JSON.parse(JSON.stringify(appState.rowHeights)),
+        merges: JSON.parse(JSON.stringify(appState.merges || {})),
         images: JSON.parse(JSON.stringify(appState.images || {})),
         filters: JSON.parse(JSON.stringify(appState.filters || {})),
         activeSheetName: appState.activeSheetName
@@ -411,6 +716,7 @@ function applyStateSnapshot(snap) {
     appState.styles = snap.styles;
     appState.colWidths = snap.colWidths;
     appState.rowHeights = snap.rowHeights;
+    appState.merges = snap.merges || {};
     appState.images = snap.images || {};
     appState.filters = snap.filters || {};
     appState.activeSheetName = snap.activeSheetName;
@@ -439,6 +745,7 @@ function loadTemplate(name) {
         appState.styles = { "Sheet1": {} };
         appState.colWidths = { "Sheet1": {} };
         appState.rowHeights = { "Sheet1": {} };
+        appState.merges = { "Sheet1": [] };
         appState.activeSheetName = "Sheet1";
     } else if (name === "sales") {
         appState.filename = "Bao_Cao_Doanh_Thu_2026.xlsx";
@@ -447,7 +754,7 @@ function loadTemplate(name) {
         
         // Header title
         rows[0][0] = "BÁO CÁO DOANH THU & LỢI NHUẬN NĂM 2026";
-        styles["0,0"] = { bold: true, fontSize: 14, color: "#107c41" };
+        styles["0,0"] = { bold: true, fontSize: 14, color: "#107c41", align: "center", valign: "middle" };
         
         // Table Columns
         const headers = ["Tháng", "Doanh Thu (Tr.đ)", "Chi Phí (Tr.đ)", "Lợi Nhuận (Tr.đ)", "Tỷ Suất LN (%)", "Đánh Giá"];
@@ -525,6 +832,7 @@ function loadTemplate(name) {
         appState.styles = { "DoanhThu": styles, "GhiChu": {} };
         appState.colWidths = { "DoanhThu": { "A": 110, "B": 130, "C": 130, "D": 130, "E": 120, "F": 130, "H": 130, "I": 110 } };
         appState.rowHeights = { "DoanhThu": {} };
+        appState.merges = { "DoanhThu": ["A1:F1"], "GhiChu": [] };
         appState.activeSheetName = "DoanhThu";
         
         // Auto create an initial demonstration floating chart!
@@ -831,20 +1139,70 @@ function createRowElement(r, colCount, sheetData, sheetStyles, colWidths, rowHei
         cellDiv.setAttribute("data-col", c);
 
         const width = colWidths[colIndexToLetter(c)] || 110;
-        cellDiv.style.width = `${width}px`;
-        cellDiv.style.minWidth = `${width}px`;
-        cellDiv.style.height = `${height}px`;
+        const merge = findMergeForCell(r, c, appState.activeSheetName);
 
-        const rawVal = sheetData[r] ? sheetData[r][c] : "";
-        const computedVal = displayValue(rawVal, r, c);
-        cellDiv.textContent = computedVal;
+        if (merge) {
+            if (merge.isMaster) {
+                // Master cell: span width and height across merged region
+                let totalWidth = 0;
+                for (let col = merge.startCol; col <= merge.endCol; col++) {
+                    totalWidth += (colWidths[colIndexToLetter(col)] || 110);
+                }
+                let totalHeight = 0;
+                for (let row = merge.startRow; row <= merge.endRow; row++) {
+                    totalHeight += (rowHeights[row] || 26);
+                }
+                cellDiv.style.width = `${totalWidth}px`;
+                cellDiv.style.minWidth = `${totalWidth}px`;
+                cellDiv.style.height = `${totalHeight}px`;
+                cellDiv.classList.add("merged-master-cell");
+                cellDiv.setAttribute("data-merged", "true");
+                cellDiv.setAttribute("data-merge-range", merge.rangeStr);
 
-        // Apply cell formatting styles
-        const styleKey = `${r},${c}`;
-        if (sheetStyles[styleKey]) {
-            applyStyleToElement(cellDiv, sheetStyles[styleKey]);
+                const rawVal = sheetData[r] ? sheetData[r][c] : "";
+                const computedVal = displayValue(rawVal, r, c);
+                cellDiv.textContent = computedVal;
+
+                const styleKey = `${r},${c}`;
+                if (sheetStyles[styleKey]) {
+                    applyStyleToElement(cellDiv, sheetStyles[styleKey]);
+                }
+                rowDiv.appendChild(cellDiv);
+            } else if (r === merge.startRow) {
+                // Covered cell in the same row: hidden completely
+                cellDiv.style.display = "none";
+                cellDiv.classList.add("merged-hidden-cell");
+                cellDiv.setAttribute("data-master-row", merge.startRow);
+                cellDiv.setAttribute("data-master-col", merge.startCol);
+                rowDiv.appendChild(cellDiv);
+            } else {
+                // Covered cell in subsequent rows: takes width for flex alignment, but invisible
+                cellDiv.style.width = `${width}px`;
+                cellDiv.style.minWidth = `${width}px`;
+                cellDiv.style.height = `${height}px`;
+                cellDiv.style.visibility = "hidden";
+                cellDiv.style.pointerEvents = "none";
+                cellDiv.classList.add("merged-covered-cell");
+                cellDiv.setAttribute("data-master-row", merge.startRow);
+                cellDiv.setAttribute("data-master-col", merge.startCol);
+                rowDiv.appendChild(cellDiv);
+            }
+        } else {
+            // Normal unmerged cell
+            cellDiv.style.width = `${width}px`;
+            cellDiv.style.minWidth = `${width}px`;
+            cellDiv.style.height = `${height}px`;
+
+            const rawVal = sheetData[r] ? sheetData[r][c] : "";
+            const computedVal = displayValue(rawVal, r, c);
+            cellDiv.textContent = computedVal;
+
+            const styleKey = `${r},${c}`;
+            if (sheetStyles[styleKey]) {
+                applyStyleToElement(cellDiv, sheetStyles[styleKey]);
+            }
+            rowDiv.appendChild(cellDiv);
         }
-        rowDiv.appendChild(cellDiv);
     }
 
     return rowDiv;
@@ -856,6 +1214,8 @@ function renderGrid() {
 
     const sheetData = appState.sheets[appState.activeSheetName];
     if (!sheetData || sheetData.length === 0) return;
+
+    _activeMergesIndex = buildMergesIndex(appState.activeSheetName);
 
     const rowCount = sheetData.length;
     const colCount = sheetData[0] ? sheetData[0].length : 0;
@@ -1087,13 +1447,17 @@ function onCellMouseDown(e, r, c) {
     if (e.button !== 0 && e.button !== 2) return; // Left or Right click
     if (appState.isEditing) commitInlineEdit();
 
+    const merge = findMergeForCell(r, c);
+
     if (e.shiftKey && appState.selectedCell) {
         // Range select with Shift
+        const targetEndR = merge ? (r >= appState.selectedCell.row ? merge.endRow : merge.startRow) : r;
+        const targetEndC = merge ? (c >= appState.selectedCell.col ? merge.endCol : merge.startCol) : c;
         appState.selectionRange = {
-            startRow: Math.min(appState.selectedCell.row, r),
-            startCol: Math.min(appState.selectedCell.col, c),
-            endRow: Math.max(appState.selectedCell.row, r),
-            endCol: Math.max(appState.selectedCell.col, c)
+            startRow: Math.min(appState.selectedCell.row, targetEndR, merge ? merge.startRow : r),
+            startCol: Math.min(appState.selectedCell.col, targetEndC, merge ? merge.startCol : c),
+            endRow: Math.max(appState.selectedCell.row, targetEndR, merge ? merge.endRow : r),
+            endCol: Math.max(appState.selectedCell.col, targetEndC, merge ? merge.endCol : c)
         };
         highlightSelection();
         updateFormulaBar();
@@ -1101,8 +1465,18 @@ function onCellMouseDown(e, r, c) {
         return;
     }
 
-    appState.selectedCell = { row: r, col: c };
-    appState.selectionRange = { startRow: r, startCol: c, endRow: r, endCol: c };
+    if (merge) {
+        appState.selectedCell = { row: merge.startRow, col: merge.startCol };
+        appState.selectionRange = {
+            startRow: merge.startRow,
+            startCol: merge.startCol,
+            endRow: merge.endRow,
+            endCol: merge.endCol
+        };
+    } else {
+        appState.selectedCell = { row: r, col: c };
+        appState.selectionRange = { startRow: r, startCol: c, endRow: r, endCol: c };
+    }
     appState.isSelecting = true;
 
     highlightSelection();
@@ -1112,11 +1486,15 @@ function onCellMouseDown(e, r, c) {
 
 function onCellMouseEnter(r, c) {
     if (!appState.isSelecting) return;
+    const merge = findMergeForCell(r, c);
+    const targetEndR = merge ? (r >= appState.selectedCell.row ? merge.endRow : merge.startRow) : r;
+    const targetEndC = merge ? (c >= appState.selectedCell.col ? merge.endCol : merge.startCol) : c;
+
     appState.selectionRange = {
-        startRow: Math.min(appState.selectedCell.row, r),
-        startCol: Math.min(appState.selectedCell.col, c),
-        endRow: Math.max(appState.selectedCell.row, r),
-        endCol: Math.max(appState.selectedCell.col, c)
+        startRow: Math.min(appState.selectedCell.row, targetEndR, merge ? merge.startRow : r),
+        startCol: Math.min(appState.selectedCell.col, targetEndC, merge ? merge.startCol : c),
+        endRow: Math.max(appState.selectedCell.row, targetEndR, merge ? merge.endRow : r),
+        endCol: Math.max(appState.selectedCell.col, targetEndC, merge ? merge.endCol : c)
     };
     highlightSelection();
     updateFormulaBar();
@@ -1131,8 +1509,19 @@ document.addEventListener("mouseup", () => {
 
 function selectCell(r, c) {
     if (appState.isEditing) commitInlineEdit();
-    appState.selectedCell = { row: r, col: c };
-    appState.selectionRange = { startRow: r, startCol: c, endRow: r, endCol: c };
+    const merge = findMergeForCell(r, c);
+    if (merge) {
+        appState.selectedCell = { row: merge.startRow, col: merge.startCol };
+        appState.selectionRange = {
+            startRow: merge.startRow,
+            startCol: merge.startCol,
+            endRow: merge.endRow,
+            endCol: merge.endCol
+        };
+    } else {
+        appState.selectedCell = { row: r, col: c };
+        appState.selectionRange = { startRow: r, startCol: c, endRow: r, endCol: c };
+    }
     highlightSelection();
     updateFormulaBar();
     updateStatusBarStats();
@@ -1221,7 +1610,13 @@ function highlightSelection() {
     }
 
     // Append Drag-to-Fill handle at the bottom-right corner cell of selection
-    const brCell = document.getElementById(`cell-${endRow}-${endCol}`);
+    let brCell = document.getElementById(`cell-${endRow}-${endCol}`);
+    if (!brCell || brCell.style.display === "none" || brCell.style.visibility === "hidden") {
+        const focusCellEl = document.getElementById(`cell-${focusRow}-${focusCol}`);
+        if (focusCellEl && focusCellEl.classList.contains("merged-master-cell")) {
+            brCell = focusCellEl;
+        }
+    }
     if (brCell) {
         const handle = document.createElement("div");
         handle.className = "fill-handle";
@@ -1232,6 +1627,7 @@ function highlightSelection() {
         });
         brCell.appendChild(handle);
     }
+    updateMergeButtonState();
 }
 
 // Smart Drag to Fill Functionality (Handles numbers, formulas, and strings like ref-retro-1 -> ref-retro-2)
@@ -1567,14 +1963,18 @@ function autoFitAllRows() {
 // ==========================================================================
 function startInlineEditing(r, c, initialChar = null) {
     if (appState.isEditing) commitInlineEdit();
+    const merge = findMergeForCell(r, c);
+    const targetR = merge ? merge.startRow : r;
+    const targetC = merge ? merge.startCol : c;
+
     appState.isEditing = true;
     document.getElementById("status-mode-indicator").textContent = "CHỈNH SỬA";
 
-    const cellEl = document.getElementById(`cell-${r}-${c}`);
+    const cellEl = document.getElementById(`cell-${targetR}-${targetC}`);
     if (!cellEl) return;
 
     const sheet = appState.sheets[appState.activeSheetName];
-    const currentRawVal = cellToString(sheet[r][c]);
+    const currentRawVal = cellToString(sheet[targetR][targetC]);
 
     const input = document.createElement("input");
     input.type = "text";
@@ -1600,37 +2000,37 @@ function startInlineEditing(r, c, initialChar = null) {
             e.stopPropagation();
             e.stopImmediatePropagation();
             const sheet = appState.sheets[appState.activeSheetName];
-            const nextRow = e.shiftKey ? Math.max(0, r - 1) : r + 1;
+            const nextRow = e.shiftKey ? Math.max(0, (merge ? merge.startRow : targetR) - 1) : (merge ? merge.endRow : targetR) + 1;
             if (nextRow >= sheet.length) {
                 appendRowsToActiveSheet(25);
             }
-            commitInlineEdit({ row: nextRow, col: c });
+            commitInlineEdit({ row: nextRow, col: targetC });
         } else if (e.key === "Tab") {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
             const sheet = appState.sheets[appState.activeSheetName];
-            const nextCol = e.shiftKey ? Math.max(0, c - 1) : c + 1;
+            const nextCol = e.shiftKey ? Math.max(0, (merge ? merge.startCol : targetC) - 1) : (merge ? merge.endCol : targetC) + 1;
             if (nextCol >= sheet[0].length) {
                 appendColsToActiveSheet(10);
             }
-            commitInlineEdit({ row: r, col: nextCol });
+            commitInlineEdit({ row: targetR, col: nextCol });
         } else if (e.key === "ArrowDown") {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
             const sheet = appState.sheets[appState.activeSheetName];
-            const nextRow = r + 1;
+            const nextRow = (merge ? merge.endRow : targetR) + 1;
             if (nextRow >= sheet.length) {
                 appendRowsToActiveSheet(25);
             }
-            commitInlineEdit({ row: nextRow, col: c });
+            commitInlineEdit({ row: nextRow, col: targetC });
         } else if (e.key === "ArrowUp") {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation();
-            const nextRow = Math.max(0, r - 1);
-            commitInlineEdit({ row: nextRow, col: c });
+            const nextRow = Math.max(0, (merge ? merge.startRow : targetR) - 1);
+            commitInlineEdit({ row: nextRow, col: targetC });
         } else if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
@@ -1763,10 +2163,14 @@ function updateFormulaBar() {
     if (!sheet || !sheet[startRow]) {
         nameBox.value = coordToA1(startRow, startCol);
         formulaInput.value = "";
+        updateMergeButtonState();
         return;
     }
 
-    if (startRow === endRow && startCol === endCol) {
+    const merge = findMergeForCell(startRow, startCol);
+    const isSingleMerged = merge && merge.startRow === startRow && merge.startCol === startCol && merge.endRow === endRow && merge.endCol === endCol;
+
+    if ((startRow === endRow && startCol === endCol) || isSingleMerged) {
         nameBox.value = coordToA1(startRow, startCol);
         const rawVal = sheet[startRow][startCol];
         formulaInput.value = cellToString(rawVal);
@@ -1774,6 +2178,7 @@ function updateFormulaBar() {
         nameBox.value = `${coordToA1(startRow, startCol)}:${coordToA1(endRow, endCol)}`;
         formulaInput.value = "";
     }
+    updateMergeButtonState();
 }
 
 // ==========================================================================
@@ -2564,6 +2969,11 @@ function setupFormattingButtons() {
         applyStyleToSelection(s => { s.wrap = !s.wrap; });
     });
 
+    const btnMergeCells = document.getElementById("btn-merge-cells");
+    if (btnMergeCells) {
+        btnMergeCells.addEventListener("click", toggleMergeCells);
+    }
+
     // Borders dropdown
     const btnBorderMenu = document.getElementById("btn-border-menu");
     btnBorderMenu.addEventListener("click", (e) => {
@@ -3008,6 +3418,7 @@ function insertRowAbove() {
     pushHistory();
     const cols = sheet[0] ? sheet[0].length : 14;
     sheet.splice(rowIdx, 0, Array(cols).fill(""));
+    shiftMergesOnRowInsert(appState.activeSheetName, rowIdx);
     renderGrid();
     selectCell(rowIdx, appState.selectedCell.col);
     showToast(`Đã chèn hàng mới tại vị trí ${rowIdx + 1}`, "success");
@@ -3018,6 +3429,7 @@ function insertColLeft() {
     const sheet = appState.sheets[appState.activeSheetName];
     pushHistory();
     sheet.forEach(row => row.splice(colIdx, 0, ""));
+    shiftMergesOnColInsert(appState.activeSheetName, colIdx);
     renderGrid();
     selectCell(appState.selectedCell.row, colIdx);
     showToast(`Đã chèn cột mới tại vị trí ${colIndexToLetter(colIdx)}`, "success");
@@ -3029,6 +3441,7 @@ function deleteActiveRow() {
     if (sheet.length <= 1) return showToast("Không thể xóa hàng duy nhất còn lại", "error");
     pushHistory();
     sheet.splice(rowIdx, 1);
+    shiftMergesOnRowDelete(appState.activeSheetName, rowIdx);
     appState.selectedCell.row = Math.min(rowIdx, sheet.length - 1);
     renderGrid();
     updateCharts();
@@ -3041,6 +3454,7 @@ function deleteActiveCol() {
     if (sheet[0].length <= 1) return showToast("Không thể xóa cột duy nhất còn lại", "error");
     pushHistory();
     sheet.forEach(row => row.splice(colIdx, 1));
+    shiftMergesOnColDelete(appState.activeSheetName, colIdx);
     appState.selectedCell.col = Math.min(colIdx, sheet[0].length - 1);
     renderGrid();
     updateCharts();
@@ -3777,48 +4191,52 @@ function setupKeyboardShortcuts() {
             }
         }
 
+        const curMerge = findMergeForCell(row, col);
         let targetRow = row;
         let targetCol = col;
         let handled = false;
 
         switch (e.key) {
             case "ArrowUp":
-                if (row > 0) targetRow = row - 1;
+                targetRow = (curMerge ? curMerge.startRow : row) - 1;
+                if (targetRow < 0) targetRow = 0;
                 handled = true; break;
             case "ArrowDown":
-                if (row >= maxRow - 1) {
+                targetRow = (curMerge ? curMerge.endRow : row) + 1;
+                if (targetRow >= maxRow - 1) {
                     appendRowsToActiveSheet(25);
                 }
-                targetRow = row + 1;
                 handled = true; break;
             case "ArrowLeft":
-                if (col > 0) targetCol = col - 1;
+                targetCol = (curMerge ? curMerge.startCol : col) - 1;
+                if (targetCol < 0) targetCol = 0;
                 handled = true; break;
             case "ArrowRight":
-                if (col >= maxCol - 1) {
+                targetCol = (curMerge ? curMerge.endCol : col) + 1;
+                if (targetCol >= maxCol - 1) {
                     appendColsToActiveSheet(10);
                 }
-                targetCol = col + 1;
                 handled = true; break;
             case "Tab":
                 e.preventDefault();
                 if (e.shiftKey) { 
-                    if (col > 0) targetCol = col - 1; 
+                    targetCol = (curMerge ? curMerge.startCol : col) - 1;
+                    if (targetCol < 0) targetCol = 0;
                 } else {
-                    if (col >= maxCol - 1) {
+                    targetCol = (curMerge ? curMerge.endCol : col) + 1;
+                    if (targetCol >= maxCol - 1) {
                         appendColsToActiveSheet(10);
                     }
-                    targetCol = col + 1;
                 }
                 handled = true; break;
             case "Enter":
                 e.preventDefault();
                 const sheet = appState.sheets[appState.activeSheetName];
-                const nextR = e.shiftKey ? Math.max(0, row - 1) : row + 1;
+                const nextR = e.shiftKey ? Math.max(0, (curMerge ? curMerge.startRow : row) - 1) : (curMerge ? curMerge.endRow : row) + 1;
                 if (nextR >= sheet.length) {
                     appendRowsToActiveSheet(25);
                 }
-                selectCell(nextR, col);
+                selectCell(nextR, curMerge ? curMerge.startCol : col);
                 return;
             case "F2":
                 e.preventDefault();
@@ -3841,6 +4259,11 @@ function setupKeyboardShortcuts() {
 
         if (handled && (targetRow !== row || targetCol !== col)) {
             e.preventDefault();
+            const destMerge = findMergeForCell(targetRow, targetCol);
+            if (destMerge) {
+                targetRow = destMerge.startRow;
+                targetCol = destMerge.startCol;
+            }
             selectCell(targetRow, targetCol);
         }
     });
@@ -4022,6 +4445,10 @@ function renameSheetInline(oldName, tabEl) {
             delete appState.sheets[oldName];
             appState.styles[newName] = appState.styles[oldName] || {};
             delete appState.styles[oldName];
+            if (appState.merges && appState.merges[oldName]) {
+                appState.merges[newName] = appState.merges[oldName];
+                delete appState.merges[oldName];
+            }
             if (appState.activeSheetName === oldName) appState.activeSheetName = newName;
             showToast(`Đã đổi tên sheet thành: ${newName}`, "success");
         }
@@ -4085,6 +4512,17 @@ function buildExportPayload(cleanFilename) {
                 }
             }
         }
+
+        // Include merged cell ranges to prevent trimming merged regions
+        const sheetMerges = (appState.merges && appState.merges[sheetName]) || [];
+        sheetMerges.forEach(mStr => {
+            const rng = normalizeRange(mStr);
+            if (rng) {
+                if (rng.endRow > maxR) maxR = rng.endRow;
+                if (rng.endCol > maxC) maxC = rng.endCol;
+            }
+        });
+
         const rowLimit = Math.max(maxR + 1, 15);
         const colLimit = Math.max(maxC + 1, 8);
         const sheetRows = [];
@@ -4349,6 +4787,7 @@ function importExcelFile(file) {
             const workbook = XLSX.read(data, { type: "array", cellFormula: true, cellStyles: true });
 
             const newSheets = {};
+            const newMerges = {};
             workbook.SheetNames.forEach(sheetName => {
                 const ws = workbook.Sheets[sheetName];
                 const range = XLSX.utils.decode_range(ws["!ref"] || "A1:Z50");
@@ -4371,6 +4810,12 @@ function importExcelFile(file) {
                     }
                 }
                 newSheets[sheetName] = matrix;
+
+                if (Array.isArray(ws["!merges"])) {
+                    newMerges[sheetName] = ws["!merges"].map(m => XLSX.utils.encode_range(m));
+                } else {
+                    newMerges[sheetName] = [];
+                }
             });
 
             pushHistory();
@@ -4380,6 +4825,7 @@ function importExcelFile(file) {
             appState.styles = {};
             appState.colWidths = {};
             appState.rowHeights = {};
+            appState.merges = newMerges;
             appState.filters = {};
             appState.activeSheetName = workbook.SheetNames[0];
 
@@ -4606,6 +5052,10 @@ function setupContextMenu() {
             if (input) input.click();
         };
     }
+    const ctxMerge = document.getElementById("ctx-merge");
+    if (ctxMerge) {
+        ctxMerge.onclick = toggleMergeCells;
+    }
     document.getElementById("ctx-insert-row").onclick = insertRowAbove;
     document.getElementById("ctx-insert-col").onclick = insertColLeft;
     document.getElementById("ctx-delete-row").onclick = deleteActiveRow;
@@ -4630,6 +5080,9 @@ function openTabContextMenu(e, sheetName) {
         const dupName = `${sheetName}_Copy`;
         appState.sheets[dupName] = JSON.parse(JSON.stringify(appState.sheets[sheetName]));
         appState.styles[dupName] = JSON.parse(JSON.stringify(appState.styles[sheetName] || {}));
+        if (appState.merges && appState.merges[sheetName]) {
+            appState.merges[dupName] = JSON.parse(JSON.stringify(appState.merges[sheetName]));
+        }
         switchSheet(dupName);
         showToast(`Đã nhân bản: ${dupName}`, "success");
     };

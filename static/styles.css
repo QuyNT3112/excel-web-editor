@@ -1081,6 +1081,36 @@ button, input, select {
     z-index: 5;
 }
 
+/* Merged Cells */
+.grid-cell.merged-master-cell {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    background-color: var(--cell-bg);
+}
+
+.grid-cell.merged-master-cell.selected {
+    background-color: var(--cell-selected-bg) !important;
+    z-index: 4;
+}
+
+.grid-cell.merged-master-cell.active-focus {
+    outline: var(--cell-focus-ring);
+    outline-offset: -2px;
+    z-index: 6;
+}
+
+.grid-cell.merged-hidden-cell {
+    display: none !important;
+}
+
+.grid-cell.merged-covered-cell {
+    visibility: hidden !important;
+    pointer-events: none !important;
+}
+
 /* Drag to Fill Handle Dot */
 .fill-handle {
     position: absolute;

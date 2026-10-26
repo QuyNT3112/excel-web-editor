@@ -1,3 +1,4 @@
+import os
 import io
 import json
 import unittest
@@ -224,6 +225,69 @@ class TestExcelWebEditor(unittest.TestCase):
 
         shutil.rmtree(temp_dir)
         print("SUCCESS: Image upload, embedding, and extraction tests passed successfully!")
+
+    def test_merged_cells_roundtrip(self):
+        """Test that merged cells are correctly parsed, stored, and exported back to openpyxl"""
+        from app import generate_openpyxl_workbook, parse_spreadsheet_data
+        import tempfile, shutil
+
+        temp_dir = tempfile.mkdtemp()
+        test_file = os.path.join(temp_dir, "MergeTest.xlsx")
+
+        payload = {
+            'filename': 'MergeTest.xlsx',
+            'filepath': test_file,
+            'sheets': {
+                'Report': [
+                    ["Monthly Financial Summary", "", "", "", ""],
+                    ["Category", "Q1", "Q2", "Q3", "Total"],
+                    ["Sales", 100, 200, 300, 600],
+                    ["Notes", "", "", "", ""]
+                ]
+            },
+            'merges': {
+                'Report': ["A1:E1", "A4:D4"]
+            }
+        }
+
+        # 1. Test generate_openpyxl_workbook with merges
+        wb, clean_fn = generate_openpyxl_workbook(payload)
+        ws = wb['Report']
+        merged_ranges_str = [str(r) for r in ws.merged_cells.ranges]
+        self.assertIn("A1:E1", merged_ranges_str)
+        self.assertIn("A4:D4", merged_ranges_str)
+
+        wb.save(test_file)
+
+        # 2. Test parse_spreadsheet_data extracts merges accurately
+        parsed = parse_spreadsheet_data(test_file, 'MergeTest.xlsx')
+        self.assertIn('merges', parsed)
+        self.assertIn('Report', parsed['merges'])
+        extracted_merges = parsed['merges']['Report']
+        self.assertIn("A1:E1", extracted_merges)
+        self.assertIn("A4:D4", extracted_merges)
+
+        # 3. Test re-exporting with dict format merges (e.g. SheetJS / frontend coordinates)
+        dict_payload = {
+            'filename': 'DictMergeTest.xlsx',
+            'sheets': {
+                'Report': [["Title", ""], ["Sub", ""]]
+            },
+            'merges': {
+                'Report': [
+                    {'s': {'r': 0, 'c': 0}, 'e': {'r': 0, 'c': 1}},
+                    {'startRow': 1, 'startCol': 0, 'endRow': 1, 'endCol': 1}
+                ]
+            }
+        }
+        wb_dict, _ = generate_openpyxl_workbook(dict_payload)
+        ws_dict = wb_dict['Report']
+        dict_merged_strs = [str(r) for r in ws_dict.merged_cells.ranges]
+        self.assertIn("A1:B1", dict_merged_strs)
+        self.assertIn("A2:B2", dict_merged_strs)
+
+        shutil.rmtree(temp_dir)
+        print("SUCCESS: Merged cells roundtrip and dict parsing tests passed successfully!")
 
 if __name__ == '__main__':
     unittest.main()
