@@ -976,6 +976,14 @@ button, input, select {
     opacity: 1;
 }
 
+.col-filter-btn.active {
+    display: block !important;
+    color: #107c41;
+    background: rgba(16, 124, 65, 0.28);
+    border-radius: 3px;
+    font-weight: 700;
+}
+
 .col-filter-btn:hover {
     background: rgba(255, 255, 255, 0.2);
 }
@@ -1868,3 +1876,128 @@ button, input, select {
 .text-blue { color: #3b82f6; }
 .text-purple { color: #a855f7; }
 .text-danger { color: #ef4444 !important; }
+
+/* ==========================================================================
+   Sheet Images Layer & Interactive Floating Cards
+   ========================================================================== */
+.sheet-images-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 45;
+}
+
+.sheet-image-card {
+    position: absolute;
+    pointer-events: auto;
+    user-select: none;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: move;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+    box-sizing: border-box;
+}
+
+.sheet-image-card:hover {
+    border-color: rgba(16, 185, 129, 0.4);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+}
+
+.sheet-image-card.selected {
+    border: 2px solid var(--excel-green);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(16, 185, 129, 0.5);
+    z-index: 90 !important;
+}
+
+.sheet-image-inner {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+    border-radius: 2px;
+}
+
+.sheet-image-content {
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    display: block;
+    pointer-events: none;
+}
+
+/* Image Mini Floating Toolbar */
+.sheet-image-toolbar {
+    position: absolute;
+    top: -38px;
+    left: 0;
+    display: none;
+    align-items: center;
+    gap: 3px;
+    background: var(--bg-panel, #252526);
+    border: 1px solid var(--border-color, #3c3c3c);
+    border-radius: 6px;
+    padding: 3px 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    z-index: 100;
+    white-space: nowrap;
+}
+
+.sheet-image-card.selected .sheet-image-toolbar {
+    display: flex;
+}
+
+.btn-img-tool {
+    background: transparent;
+    border: none;
+    color: var(--text-primary, #e2e8f0);
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: background 0.15s, color 0.15s;
+}
+
+.btn-img-tool:hover {
+    background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+    color: var(--excel-green, #10b981);
+}
+
+.btn-img-tool.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+/* 8 Resize Handles */
+.img-resize-handle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: #ffffff;
+    border: 1.5px solid var(--excel-green, #10b981);
+    border-radius: 2px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    display: none;
+    z-index: 95;
+    box-sizing: border-box;
+}
+
+.sheet-image-card.selected .img-resize-handle {
+    display: block;
+}
+
+.img-resize-handle.handle-nw { top: -4px; left: -4px; cursor: nwse-resize; }
+.img-resize-handle.handle-ne { top: -4px; right: -4px; cursor: nesw-resize; }
+.img-resize-handle.handle-sw { bottom: -4px; left: -4px; cursor: nesw-resize; }
+.img-resize-handle.handle-se { bottom: -4px; right: -4px; cursor: nwse-resize; }
+.img-resize-handle.handle-n  { top: -4px; left: calc(50% - 4px); cursor: ns-resize; }
+.img-resize-handle.handle-s  { bottom: -4px; left: calc(50% - 4px); cursor: ns-resize; }
+.img-resize-handle.handle-w  { top: calc(50% - 4px); left: -4px; cursor: ew-resize; }
+.img-resize-handle.handle-e  { top: calc(50% - 4px); right: -4px; cursor: ew-resize; }
+

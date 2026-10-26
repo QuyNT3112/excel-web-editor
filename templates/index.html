@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Excel Web Pro - Bản sao Microsoft Excel trực tuyến đầy đủ tính năng: đọc file excel, tính toán công thức hàm SUM, AVERAGE, IF, VLOOKUP..., tạo biểu đồ chuyên nghiệp, xuất file .xlsx trực tiếp.">
-    <title>Excel Web Editor - Excel Web Pro - Trình Quản Lý Bảng Tính Chuyên Nghiệp</title>
+    <title>{% if initial_filename %}{{ initial_filename }} - Excel Web Editor - Excel Web Pro{% else %}Excel Web Editor - Excel Web Pro - Trình Quản Lý Bảng Tính Chuyên Nghiệp{% endif %}</title>
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     
     <!-- Local libraries with CDN fallbacks -->
@@ -40,8 +40,8 @@
                 </svg>
                 <div class="title-wrapper">
                     <span class="app-name">Excel Web Pro</span>
-                    <input type="text" id="workbook-filename" class="workbook-filename-input" value="Bao_Cao_Kinh_Doanh.xlsx" title="Nhấn để đổi tên file">
-                    <span id="save-badge" class="save-status-badge saved">Đã lưu</span>
+                    <input type="text" id="workbook-filename" class="workbook-filename-input" value="{{ initial_filename or 'Bao_Cao_Kinh_Doanh.xlsx' }}" title="Nhấn để đổi tên file">
+                    <span id="save-badge" class="save-status-badge saved" style="cursor: pointer;" title="Nhấn để lưu (Ctrl+S)">Đã lưu</span>
                 </div>
             </div>
         </div>
@@ -408,11 +408,18 @@
                         </div>
                     </div>
 
-                    <button id="btn-filter-toggle" class="ribbon-tool-btn" title="Bật/Tắt bộ lọc">
+                    <button id="btn-filter-toggle" class="ribbon-tool-btn" title="Bật/Tắt hiển thị mũi tên bộ lọc">
                         <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
                         </svg>
                         <span>Lọc (Filter)</span>
+                    </button>
+                    <button id="btn-clear-filter-home" class="ribbon-tool-btn" title="Xóa tất cả các điều kiện lọc đang áp dụng">
+                        <svg class="icon text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                            <line x1="4" y1="4" x2="20" y2="20"/>
+                        </svg>
+                        <span>Bỏ lọc</span>
                     </button>
                 </div>
                 <div class="ribbon-row">
@@ -485,6 +492,19 @@
             </div>
             <div class="ribbon-divider"></div>
             <div class="ribbon-group">
+                <button id="btn-insert-image" class="ribbon-btn-large" title="Tải ảnh từ máy tính hoặc dán ảnh vào trang tính (Ctrl+V)">
+                    <svg class="icon-lg text-emerald" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <polyline points="21 15 16 10 5 21"/>
+                    </svg>
+                    <span>Chèn hình ảnh</span>
+                </button>
+                <input type="file" id="image-file-input" accept="image/*" multiple style="display: none;">
+                <span class="group-label">Hình ảnh</span>
+            </div>
+            <div class="ribbon-divider"></div>
+            <div class="ribbon-group">
                 <button id="btn-insert-func-wizard" class="ribbon-btn-large">
                     <span class="fx-large">fx</span>
                     <span>Chèn hàm tính</span>
@@ -546,6 +566,13 @@
                         <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
                     </svg>
                     <span>Bật / Tắt Lọc</span>
+                </button>
+                <button id="btn-data-clear-filter" class="ribbon-btn-large" title="Xóa tất cả các điều kiện lọc đang áp dụng">
+                    <svg class="icon-lg text-danger" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+                        <line x1="4" y1="4" x2="20" y2="20"/>
+                    </svg>
+                    <span>Bỏ lọc (Clear)</span>
                 </button>
                 <span class="group-label">Sắp xếp & Lọc</span>
             </div>
@@ -888,6 +915,9 @@
         <button class="context-menu-item" id="ctx-paste">
             <span class="ctx-icon">&#128203;</span> Dán (Paste) <span class="ctx-shortcut">Ctrl+V</span>
         </button>
+        <button class="context-menu-item" id="ctx-insert-image">
+            <span class="ctx-icon">&#128444;</span> Chèn hình ảnh tại ô này
+        </button>
         <div class="context-menu-divider"></div>
         <button class="context-menu-item" id="ctx-insert-row">
             <span class="ctx-icon">+</span> Chèn hàng ở đây
@@ -954,6 +984,9 @@
         </div>
     </div>
 
+    {% if initial_data_json %}
+    <script id="initial-data-payload" type="application/json">{{ initial_data_json | safe }}</script>
+    {% endif %}
     <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

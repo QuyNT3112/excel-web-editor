@@ -6,11 +6,15 @@
 
 const appState = {
     filename: "Bao_Cao_Kinh_Doanh.xlsx",
+    filepath: null,
     sheets: {},
     styles: {},
     colWidths: {},
     rowHeights: {},
     merges: {},
+    images: {}, // { [sheetName]: [ { id, src, name, x, y, width, height, col, row, zIndex } ] }
+    selectedImageId: null,
+    imageClipboard: null, // { src, name, width, height }
     activeSheetName: "DoanhThu",
     selectedCell: { row: 0, col: 0 },
     selectionRange: { startRow: 0, startCol: 0, endRow: 0, endCol: 0 },
@@ -25,6 +29,7 @@ const appState = {
     zoom: 100,
     filters: {}, // { sheetName: { colIdx: [allowedValues] } }
     filterActiveCol: null,
+    filterMode: true,
     resizingCol: null,
     resizingRow: null
 };
@@ -87,7 +92,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initApp();
 });
 
-function initApp() {
+async function initApp() {
     setupRibbonTabs();
     setupFormulaBar();
     setupFormattingButtons();
@@ -96,9 +101,174 @@ function initApp() {
     setupContextMenu();
     setupZoomAndTheme();
     setupInfiniteGridControls();
+    setupGridEventDelegation();
+    setupGlobalDragAndDrop();
+    setupSaveStatusBadge();
+    setupImageControls();
+    setupFilterPopoverGlobalEvents();
+    document.addEventListener("paste", handlePasteEvent);
     
-    // Load default demo sales template
-    loadTemplate("sales");
+    // 1. Instant 0ms load if initial data was pre-injected into HTML by server
+    const payloadEl = document.getElementById("initial-data-payload");
+    if (payloadEl && payloadEl.textContent.trim()) {
+        try {
+            const data = JSON.parse(payloadEl.textContent);
+            if (data && data.sheets && Object.keys(data.sheets).length > 0) {
+                applyLoadedWorkbook(data);
+                return;
+            }
+        } catch (e) {
+            console.warn("Lỗi đọc initial-data-payload:", e);
+        }
+    }
+
+    // 2. Fallback to API check
+    const fileLoaded = await checkAndLoadInitialFile();
+    if (!fileLoaded) {
+        // Load default demo sales template only if no initial file was opened
+        loadTemplate("sales");
+    }
+}
+
+async function checkAndLoadInitialFile() {
+    try {
+        const res = await fetch("/api/initial-file");
+        if (!res.ok) return false;
+        const info = await res.json();
+        if (!info.has_file) return false;
+
+        showLoading(`Đang mở file: ${info.filename}...`);
+        const loadRes = await fetch("/api/load-initial-file");
+        if (!loadRes.ok) {
+            hideLoading();
+            return false;
+        }
+        const data = await loadRes.json();
+
+        if (data.fallback_to_raw && data.raw_url) {
+            const blobRes = await fetch(data.raw_url);
+            const blob = await blobRes.blob();
+            const file = new File([blob], data.filename, { type: blob.type });
+            importExcelFile(file);
+            if (data.filepath) appState.filepath = data.filepath;
+            hideLoading();
+            return true;
+        }
+
+        if (data.sheets && Object.keys(data.sheets).length > 0) {
+            applyLoadedWorkbook(data);
+            hideLoading();
+            showToast(`Đã mở thành công file: ${data.filename}`, "success");
+            return true;
+        }
+    } catch (err) {
+        console.error("Lỗi khi tải file ban đầu:", err);
+        hideLoading();
+    }
+    return false;
+}
+
+function applyLoadedWorkbook(data) {
+    pushHistory();
+    appState.filename = data.filename;
+    appState.filepath = data.filepath || null;
+    appState.sheets = data.sheets;
+    appState.styles = data.styles || {};
+    appState.colWidths = data.colWidths || {};
+    appState.rowHeights = data.rowHeights || {};
+    appState.merges = data.merges || {};
+    appState.images = data.images || {};
+    appState.filters = {};
+    appState.activeSheetName = (data.sheetNames && data.sheetNames[0]) || Object.keys(data.sheets)[0];
+
+    const nameInput = document.getElementById("workbook-filename");
+    if (nameInput) nameInput.value = data.filename;
+    document.title = `${data.filename} - Excel Web Pro`;
+    setSaveStatus(true, "Đã mở");
+
+    renderTabs();
+    renderGrid();
+    renderImages();
+    selectCell(0, 0);
+}
+
+function setSaveStatus(isSaved, message) {
+    const badge = document.getElementById("save-badge");
+    if (!badge) return;
+    if (isSaved) {
+        badge.className = "save-status-badge saved";
+        badge.textContent = message || "Đã lưu";
+    } else {
+        badge.className = "save-status-badge unsaved";
+        badge.textContent = "Chưa lưu";
+    }
+}
+
+function setupSaveStatusBadge() {
+    const badge = document.getElementById("save-badge");
+    if (badge) {
+        badge.style.cursor = "pointer";
+        badge.title = "Nhấn để lưu file (Ctrl+S)";
+        badge.addEventListener("click", () => {
+            saveCurrentFile();
+        });
+    }
+}
+
+async function saveCurrentFile() {
+    if (appState.isEditing) commitInlineEdit();
+
+    if (appState.filepath) {
+        showLoading("Đang lưu trực tiếp vào file...");
+        const payload = buildExportPayload(appState.filename);
+        payload.filepath = appState.filepath;
+
+        try {
+            const res = await fetch("/api/save_in_place", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const result = await res.json();
+            hideLoading();
+            if (result.success) {
+                setSaveStatus(true, "Đã lưu");
+                showToast(`✅ Đã lưu trực tiếp vào: ${result.filename}!`, "success");
+                return;
+            }
+        } catch (err) {
+            console.warn("Lưu trực tiếp thất bại, chuyển sang xuất file:", err);
+            hideLoading();
+        }
+    }
+
+    exportDirectXLSX();
+}
+
+function setupGlobalDragAndDrop() {
+    window.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    window.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            const file = e.dataTransfer.files[0];
+            const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+            if ([".xlsx", ".xls", ".xlsm", ".csv"].includes(ext)) {
+                importExcelFile(file);
+            } else if (file.type.startsWith("image/") || [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp"].includes(ext)) {
+                const gridEl = document.getElementById("grid-element");
+                const rect = gridEl ? gridEl.getBoundingClientRect() : { left: 0, top: 0 };
+                const x = Math.max(50, e.clientX - rect.left);
+                const y = Math.max(40, e.clientY - rect.top);
+                handleImageFileUpload(file, x, y);
+            } else {
+                showToast("Vui lòng kéo thả file Excel (.xlsx, .xls) hoặc file ảnh (.png, .jpg).", "warning");
+            }
+        }
+    });
 }
 
 // ==========================================================================
@@ -189,12 +359,15 @@ function pushHistory() {
         styles: JSON.parse(JSON.stringify(appState.styles)),
         colWidths: JSON.parse(JSON.stringify(appState.colWidths)),
         rowHeights: JSON.parse(JSON.stringify(appState.rowHeights)),
+        images: JSON.parse(JSON.stringify(appState.images || {})),
+        filters: JSON.parse(JSON.stringify(appState.filters || {})),
         activeSheetName: appState.activeSheetName
     };
     appState.undoStack.push(snapshot);
     if (appState.undoStack.length > 30) appState.undoStack.shift();
     appState.redoStack = [];
     updateUndoRedoButtons();
+    setSaveStatus(false);
 }
 
 function undo() {
@@ -204,6 +377,8 @@ function undo() {
         styles: JSON.parse(JSON.stringify(appState.styles)),
         colWidths: JSON.parse(JSON.stringify(appState.colWidths)),
         rowHeights: JSON.parse(JSON.stringify(appState.rowHeights)),
+        images: JSON.parse(JSON.stringify(appState.images || {})),
+        filters: JSON.parse(JSON.stringify(appState.filters || {})),
         activeSheetName: appState.activeSheetName
     };
     appState.redoStack.push(current);
@@ -220,6 +395,8 @@ function redo() {
         styles: JSON.parse(JSON.stringify(appState.styles)),
         colWidths: JSON.parse(JSON.stringify(appState.colWidths)),
         rowHeights: JSON.parse(JSON.stringify(appState.rowHeights)),
+        images: JSON.parse(JSON.stringify(appState.images || {})),
+        filters: JSON.parse(JSON.stringify(appState.filters || {})),
         activeSheetName: appState.activeSheetName
     };
     appState.undoStack.push(current);
@@ -234,9 +411,12 @@ function applyStateSnapshot(snap) {
     appState.styles = snap.styles;
     appState.colWidths = snap.colWidths;
     appState.rowHeights = snap.rowHeights;
+    appState.images = snap.images || {};
+    appState.filters = snap.filters || {};
     appState.activeSheetName = snap.activeSheetName;
     renderTabs();
     renderGrid();
+    renderImages();
     updateFormulaBar();
     updateCharts();
 }
@@ -521,11 +701,11 @@ function setupRibbonTabs() {
         });
     }
 
-    // Direct download button in Ribbon > File tab
+    // Direct save / download button in Ribbon > File tab
     const btnFileSaveDownload = document.getElementById("btn-file-save-download");
     if (btnFileSaveDownload) {
         btnFileSaveDownload.addEventListener("click", () => {
-            exportDirectXLSX();
+            saveCurrentFile();
         });
     }
 
@@ -594,11 +774,37 @@ function setupRibbonTabs() {
 // ==========================================================================
 // Grid Rendering & Infinite Grid Engine
 // ==========================================================================
+function isRowMatchingFilters(r, sheetData, sheetFilters) {
+    if (r === 0) return true; // Row 0 is header row, never filtered out
+    if (!sheetFilters) return true;
+    const filterCols = Object.keys(sheetFilters);
+    if (filterCols.length === 0) return true;
+
+    for (const colStr of filterCols) {
+        const allowed = sheetFilters[colStr];
+        if (!Array.isArray(allowed)) continue;
+        const col = parseInt(colStr, 10);
+        const cellRaw = sheetData[r] ? sheetData[r][col] : "";
+        const cellVal = cellToString(cellRaw).trim();
+        if (!allowed.includes(cellVal)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 function createRowElement(r, colCount, sheetData, sheetStyles, colWidths, rowHeights) {
     const rowDiv = document.createElement("div");
     rowDiv.className = "grid-row";
     const height = rowHeights[r] || 26;
     rowDiv.style.height = `${height}px`;
+
+    // Filter check: hide row if it doesn't match active sheet filters
+    const sheetFilters = appState.filters[appState.activeSheetName];
+    if (r > 0 && sheetFilters && !isRowMatchingFilters(r, sheetData, sheetFilters)) {
+        rowDiv.style.display = "none";
+        rowDiv.classList.add("row-filtered-out");
+    }
 
     // Row Header (Number)
     const rowHeader = document.createElement("div");
@@ -638,12 +844,6 @@ function createRowElement(r, colCount, sheetData, sheetStyles, colWidths, rowHei
         if (sheetStyles[styleKey]) {
             applyStyleToElement(cellDiv, sheetStyles[styleKey]);
         }
-
-        // Cell mouse selection events
-        cellDiv.addEventListener("mousedown", (e) => onCellMouseDown(e, r, c));
-        cellDiv.addEventListener("mouseenter", () => onCellMouseEnter(r, c));
-        cellDiv.addEventListener("dblclick", () => startInlineEditing(r, c));
-
         rowDiv.appendChild(cellDiv);
     }
 
@@ -689,10 +889,14 @@ function renderGrid() {
         colHeader.innerHTML = `<span>${colLetter}</span>`;
 
         // Filter button indicator
+        const isColFiltered = !!(appState.filters[appState.activeSheetName]?.[c]);
         const filterBtn = document.createElement("button");
-        filterBtn.className = "col-filter-btn" + (appState.filters[appState.activeSheetName]?.[c] ? " active" : "");
-        filterBtn.innerHTML = "&#9662;";
-        filterBtn.title = "Lọc dữ liệu cột này";
+        filterBtn.className = "col-filter-btn" + (isColFiltered ? " active" : "");
+        if (appState.filterMode || isColFiltered) {
+            filterBtn.style.display = "block";
+        }
+        filterBtn.innerHTML = isColFiltered ? "&#9660;" : "&#9662;";
+        filterBtn.title = isColFiltered ? `Cột ${colLetter} đang được lọc (Nhấn để chỉnh sửa hoặc bỏ lọc)` : `Lọc cột ${colLetter}`;
         filterBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             openFilterPopover(c, colHeader);
@@ -719,6 +923,7 @@ function renderGrid() {
 
     updateGridFooterInfo();
     highlightSelection();
+    renderImages();
 }
 
 function appendRowsToActiveSheet(count = 50) {
@@ -765,7 +970,17 @@ function updateGridFooterInfo() {
     const infoEl = document.getElementById("grid-rows-cols-count");
     if (infoEl) {
         const lastCol = colIndexToLetter(Math.max(0, colCount - 1));
-        infoEl.textContent = `Tổng: ${rowCount} hàng × ${colCount} cột (${lastCol})`;
+        const sheetFilters = appState.filters[appState.activeSheetName] || {};
+        const activeFilterCols = Object.keys(sheetFilters).filter(c => Array.isArray(sheetFilters[c]));
+        if (activeFilterCols.length > 0) {
+            let visibleCount = 0;
+            for (let r = 0; r < rowCount; r++) {
+                if (isRowMatchingFilters(r, sheetData, sheetFilters)) visibleCount++;
+            }
+            infoEl.textContent = `Đang lọc: ${visibleCount}/${rowCount} hàng × ${colCount} cột (${lastCol})`;
+        } else {
+            infoEl.textContent = `Tổng: ${rowCount} hàng × ${colCount} cột (${lastCol})`;
+        }
     }
 }
 
@@ -833,8 +1048,41 @@ function applyStyleToElement(el, s) {
 }
 
 // ==========================================================================
-// Cell Selection & Drag-to-Select
+// Cell Selection & Drag-to-Select (High Performance Event Delegation)
 // ==========================================================================
+function setupGridEventDelegation() {
+    const gridEl = document.getElementById("grid-element");
+    if (!gridEl) return;
+
+    gridEl.addEventListener("mousedown", (e) => {
+        const cell = e.target.closest(".grid-cell");
+        if (cell) {
+            const r = parseInt(cell.getAttribute("data-row"), 10);
+            const c = parseInt(cell.getAttribute("data-col"), 10);
+            if (!isNaN(r) && !isNaN(c)) onCellMouseDown(e, r, c);
+        }
+    });
+
+    gridEl.addEventListener("mouseover", (e) => {
+        if (!appState.isSelecting) return;
+        const cell = e.target.closest(".grid-cell");
+        if (cell) {
+            const r = parseInt(cell.getAttribute("data-row"), 10);
+            const c = parseInt(cell.getAttribute("data-col"), 10);
+            if (!isNaN(r) && !isNaN(c)) onCellMouseEnter(r, c);
+        }
+    });
+
+    gridEl.addEventListener("dblclick", (e) => {
+        const cell = e.target.closest(".grid-cell");
+        if (cell) {
+            const r = parseInt(cell.getAttribute("data-row"), 10);
+            const c = parseInt(cell.getAttribute("data-col"), 10);
+            if (!isNaN(r) && !isNaN(c)) startInlineEditing(r, c);
+        }
+    });
+}
+
 function onCellMouseDown(e, r, c) {
     if (e.button !== 0 && e.button !== 2) return; // Left or Right click
     if (appState.isEditing) commitInlineEdit();
@@ -2366,6 +2614,11 @@ function setupFormattingButtons() {
     document.getElementById("btn-filter-toggle").addEventListener("click", toggleFilterMode);
     document.getElementById("btn-data-filter").addEventListener("click", toggleFilterMode);
 
+    const btnClearFilterHome = document.getElementById("btn-clear-filter-home");
+    if (btnClearFilterHome) btnClearFilterHome.addEventListener("click", clearAllFilters);
+    const btnClearFilterData = document.getElementById("btn-data-clear-filter");
+    if (btnClearFilterData) btnClearFilterData.addEventListener("click", clearAllFilters);
+
     // Clear selection
     document.getElementById("btn-clear-selection").addEventListener("click", () => {
         pushHistory();
@@ -2434,83 +2687,316 @@ function applyAutoSum(funcName) {
     showToast(`Đã áp dụng ${funcName} tại hàng ${targetRow + 1}`, "success");
 }
 
-function sortActiveColumn(ascending = true) {
-    const colIdx = appState.selectedCell.col;
+function sortActiveColumn(ascending = true, targetCol = null) {
+    const colIdx = (targetCol !== null && targetCol !== undefined) ? targetCol : appState.selectedCell.col;
     const sheet = appState.sheets[appState.activeSheetName];
+    if (!sheet || sheet.length <= 1) return;
     pushHistory();
+
+    const sheetStyles = appState.styles[appState.activeSheetName] || {};
+    const colCount = sheet[0] ? sheet[0].length : 0;
 
     // Preserve first row if header
     const hasHeader = isNaN(parseFloat(sheet[0][colIdx])) && sheet[0][colIdx] !== "";
     const startR = hasHeader ? 1 : 0;
 
-    const dataRows = sheet.slice(startR);
-    dataRows.sort((rowA, rowB) => {
-        const valA = rowA[colIdx];
-        const valB = rowB[colIdx];
+    const indexedRows = [];
+    for (let r = startR; r < sheet.length; r++) {
+        indexedRows.push({
+            data: sheet[r],
+            oldRow: r
+        });
+    }
+
+    indexedRows.sort((a, b) => {
+        const valA = a.data[colIdx];
+        const valB = b.data[colIdx];
         const numA = parseFloat(valA);
         const numB = parseFloat(valB);
 
         if (!isNaN(numA) && !isNaN(numB)) {
             return ascending ? numA - numB : numB - numA;
         }
-        return ascending ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
+        return ascending ? String(valA || "").localeCompare(String(valB || ""), "vi") : String(valB || "").localeCompare(String(valA || ""), "vi");
     });
 
-    appState.sheets[appState.activeSheetName] = (hasHeader ? [sheet[0]] : []).concat(dataRows);
+    const newRows = hasHeader ? [sheet[0]] : [];
+    const newStyles = {};
+
+    if (hasHeader) {
+        for (let c = 0; c < colCount; c++) {
+            if (sheetStyles[`0,${c}`]) {
+                newStyles[`0,${c}`] = sheetStyles[`0,${c}`];
+            }
+        }
+    }
+
+    indexedRows.forEach((item, newIdx) => {
+        const newR = startR + newIdx;
+        newRows.push(item.data);
+        for (let c = 0; c < colCount; c++) {
+            const oldKey = `${item.oldRow},${c}`;
+            if (sheetStyles[oldKey]) {
+                newStyles[`${newR},${c}`] = sheetStyles[oldKey];
+            }
+        }
+    });
+
+    appState.sheets[appState.activeSheetName] = newRows;
+    appState.styles[appState.activeSheetName] = newStyles;
     renderGrid();
     updateCharts();
     showToast(`Đã sắp xếp cột ${colIndexToLetter(colIdx)} ${ascending ? "A -> Z" : "Z -> A"}`, "success");
 }
 
 function toggleFilterMode() {
-    const colCount = appState.sheets[appState.activeSheetName][0].length;
+    appState.filterMode = !appState.filterMode;
     const filterBtns = document.querySelectorAll(".col-filter-btn");
-    const isShowing = filterBtns[0] && filterBtns[0].style.display === "block";
 
-    filterBtns.forEach(btn => {
-        btn.style.display = isShowing ? "none" : "block";
-    });
-
-    showToast(isShowing ? "Đã tắt bộ lọc cột" : "Đã bật bộ lọc: Nhấn vào mũi tên trên tiêu đề cột để lọc!", "info");
+    if (!appState.filterMode) {
+        const sheetFilters = appState.filters[appState.activeSheetName];
+        const hasFilters = sheetFilters && Object.keys(sheetFilters).length > 0;
+        if (hasFilters) {
+            pushHistory();
+            appState.filters[appState.activeSheetName] = {};
+        }
+        filterBtns.forEach(btn => btn.style.display = "none");
+        showToast("Đã tắt chế độ lọc", "info");
+    } else {
+        filterBtns.forEach(btn => btn.style.display = "block");
+        showToast("Đã bật bộ lọc: Nhấn vào mũi tên trên tiêu đề cột để lọc!", "info");
+    }
+    renderGrid();
 }
 
 function openFilterPopover(colIdx, colHeaderEl) {
     appState.filterActiveCol = colIdx;
     const popover = document.getElementById("filter-popover");
+    if (!popover) return;
     const colLetter = colIndexToLetter(colIdx);
     document.getElementById("filter-col-title").textContent = `Lọc cột ${colLetter}`;
 
     const sheet = appState.sheets[appState.activeSheetName];
-    const uniqueVals = new Set();
+    if (!sheet || sheet.length === 0) return;
+
+    let hasBlanks = false;
+    const valSet = new Set();
     for (let r = 1; r < sheet.length; r++) {
-        const v = cellToString(sheet[r][colIdx]);
-        if (v) uniqueVals.add(v);
+        const raw = sheet[r]?.[colIdx];
+        const v = cellToString(raw).trim();
+        if (v === "") {
+            hasBlanks = true;
+        } else {
+            valSet.add(v);
+        }
     }
+
+    const sortedVals = Array.from(valSet).sort((a, b) => {
+        const na = parseFloat(a);
+        const nb = parseFloat(b);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return a.localeCompare(b, "vi", { sensitivity: "base" });
+    });
+
+    const currentFilter = appState.filters[appState.activeSheetName]?.[colIdx];
+    const isFiltered = Array.isArray(currentFilter);
+    const allowedSet = isFiltered ? new Set(currentFilter) : null;
 
     const listEl = document.getElementById("filter-items-list");
     listEl.innerHTML = "";
 
-    uniqueVals.forEach(val => {
-        const row = document.createElement("label");
-        row.className = "filter-item-row";
-        row.innerHTML = `<input type="checkbox" value="${val}" checked> <span>${val}</span>`;
-        listEl.appendChild(row);
+    // 1. Select All Checkbox
+    const selectAllRow = document.createElement("label");
+    selectAllRow.className = "filter-item-row filter-select-all-row";
+    selectAllRow.style.fontWeight = "600";
+    selectAllRow.style.borderBottom = "1px solid var(--border-color)";
+    selectAllRow.style.paddingBottom = "5px";
+    selectAllRow.style.marginBottom = "5px";
+
+    const selectAllCb = document.createElement("input");
+    selectAllCb.type = "checkbox";
+    selectAllCb.id = "filter-select-all";
+    const selectAllSpan = document.createElement("span");
+    selectAllSpan.textContent = "(Chọn tất cả)";
+    selectAllRow.appendChild(selectAllCb);
+    selectAllRow.appendChild(selectAllSpan);
+    listEl.appendChild(selectAllRow);
+
+    // 2. Blank cells item
+    if (hasBlanks) {
+        const blankRow = document.createElement("label");
+        blankRow.className = "filter-item-row";
+        const blankCb = document.createElement("input");
+        blankCb.type = "checkbox";
+        blankCb.className = "filter-item-cb";
+        blankCb.dataset.val = "";
+        blankCb.checked = !isFiltered || allowedSet.has("");
+        const blankSpan = document.createElement("span");
+        blankSpan.textContent = "(Ô trống)";
+        blankSpan.style.fontStyle = "italic";
+        blankSpan.style.opacity = "0.75";
+        blankRow.appendChild(blankCb);
+        blankRow.appendChild(blankSpan);
+        listEl.appendChild(blankRow);
+    }
+
+    // 3. Regular items
+    sortedVals.forEach(val => {
+        const itemRow = document.createElement("label");
+        itemRow.className = "filter-item-row";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "filter-item-cb";
+        cb.dataset.val = val;
+        cb.checked = !isFiltered || allowedSet.has(val);
+        const span = document.createElement("span");
+        span.textContent = val;
+        itemRow.appendChild(cb);
+        itemRow.appendChild(span);
+        listEl.appendChild(itemRow);
     });
 
+    function updateSelectAllState() {
+        const allVisibleCbs = Array.from(listEl.querySelectorAll(".filter-item-cb")).filter(cb => {
+            return cb.closest(".filter-item-row").style.display !== "none";
+        });
+        if (allVisibleCbs.length === 0) {
+            selectAllCb.checked = false;
+            selectAllCb.indeterminate = false;
+            return;
+        }
+        const checkedCount = allVisibleCbs.filter(cb => cb.checked).length;
+        if (checkedCount === allVisibleCbs.length) {
+            selectAllCb.checked = true;
+            selectAllCb.indeterminate = false;
+        } else if (checkedCount === 0) {
+            selectAllCb.checked = false;
+            selectAllCb.indeterminate = false;
+        } else {
+            selectAllCb.checked = false;
+            selectAllCb.indeterminate = true;
+        }
+    }
+
+    selectAllCb.addEventListener("change", () => {
+        const isChecked = selectAllCb.checked;
+        const allVisibleCbs = Array.from(listEl.querySelectorAll(".filter-item-cb")).filter(cb => {
+            return cb.closest(".filter-item-row").style.display !== "none";
+        });
+        allVisibleCbs.forEach(cb => { cb.checked = isChecked; });
+    });
+
+    listEl.addEventListener("change", (e) => {
+        if (e.target.classList.contains("filter-item-cb")) {
+            updateSelectAllState();
+        }
+    });
+
+    updateSelectAllState();
+
+    // Search input live filtering
+    const searchInput = document.getElementById("filter-search-input");
+    searchInput.value = "";
+    searchInput.oninput = () => {
+        const query = searchInput.value.toLowerCase().trim();
+        const rows = listEl.querySelectorAll(".filter-item-row:not(.filter-select-all-row)");
+        rows.forEach(r => {
+            const txt = r.textContent.toLowerCase();
+            r.style.display = txt.includes(query) ? "" : "none";
+        });
+        updateSelectAllState();
+    };
+
+    // Position popover
     const rect = colHeaderEl.getBoundingClientRect();
     popover.style.top = `${rect.bottom + 4}px`;
-    popover.style.left = `${Math.min(rect.left, window.innerWidth - 260)}px`;
+    popover.style.left = `${Math.max(10, Math.min(rect.left, window.innerWidth - 270))}px`;
     popover.classList.remove("hidden");
 
+    // Close button
     document.getElementById("btn-close-filter").onclick = () => popover.classList.add("hidden");
+
+    // Sort buttons
     document.getElementById("btn-filter-sort-asc").onclick = () => {
-        sortActiveColumn(true);
+        sortActiveColumn(true, colIdx);
         popover.classList.add("hidden");
     };
     document.getElementById("btn-filter-sort-desc").onclick = () => {
-        sortActiveColumn(false);
+        sortActiveColumn(false, colIdx);
         popover.classList.add("hidden");
     };
+
+    // "Áp dụng" button
+    document.getElementById("btn-filter-apply").onclick = () => {
+        applyColumnFilter(colIdx);
+    };
+
+    // "Bỏ lọc" button
+    document.getElementById("btn-filter-clear").onclick = () => {
+        clearColumnFilter(colIdx);
+    };
+}
+
+function applyColumnFilter(colIdx) {
+    const popover = document.getElementById("filter-popover");
+    const listEl = document.getElementById("filter-items-list");
+    const allCbs = Array.from(listEl.querySelectorAll(".filter-item-cb"));
+    const checkedCbs = allCbs.filter(cb => cb.checked);
+
+    if (!appState.filters[appState.activeSheetName]) {
+        appState.filters[appState.activeSheetName] = {};
+    }
+
+    const colLetter = colIndexToLetter(colIdx);
+    pushHistory();
+
+    if (checkedCbs.length === allCbs.length) {
+        delete appState.filters[appState.activeSheetName][colIdx];
+        showToast(`Đã hiển thị tất cả dữ liệu cột ${colLetter}`, "info");
+    } else {
+        const allowedVals = checkedCbs.map(cb => cb.dataset.val);
+        appState.filters[appState.activeSheetName][colIdx] = allowedVals;
+        showToast(`Đã áp dụng bộ lọc cột ${colLetter} (${checkedCbs.length} giá trị)`, "success");
+    }
+
+    if (popover) popover.classList.add("hidden");
+    renderGrid();
+}
+
+function clearColumnFilter(colIdx) {
+    const popover = document.getElementById("filter-popover");
+    const colLetter = colIndexToLetter(colIdx);
+    if (appState.filters[appState.activeSheetName]) {
+        delete appState.filters[appState.activeSheetName][colIdx];
+    }
+    pushHistory();
+    if (popover) popover.classList.add("hidden");
+    renderGrid();
+    showToast(`Đã bỏ lọc cột ${colLetter}`, "info");
+}
+
+function clearAllFilters() {
+    const sheetFilters = appState.filters[appState.activeSheetName];
+    const hasFilters = sheetFilters && Object.keys(sheetFilters).some(k => Array.isArray(sheetFilters[k]));
+    if (hasFilters) {
+        pushHistory();
+        appState.filters[appState.activeSheetName] = {};
+        const popover = document.getElementById("filter-popover");
+        if (popover) popover.classList.add("hidden");
+        renderGrid();
+        showToast("Đã xóa tất cả bộ lọc trên trang tính!", "success");
+    } else {
+        showToast("Không có bộ lọc nào đang được áp dụng.", "info");
+    }
+}
+
+function setupFilterPopoverGlobalEvents() {
+    document.addEventListener("click", (e) => {
+        const popover = document.getElementById("filter-popover");
+        if (!popover || popover.classList.contains("hidden")) return;
+        if (e.target.closest("#filter-popover") || e.target.closest(".col-filter-btn")) return;
+        popover.classList.add("hidden");
+    });
 }
 
 // ==========================================================================
@@ -2562,19 +3048,33 @@ function deleteActiveCol() {
 }
 
 // ==========================================================================
-// Clipboard (Cut, Copy, Paste)
+// Clipboard (Cut, Copy, Paste) & Sheet Image Manipulation
 // ==========================================================================
+
 function copySelection() {
+    if (appState.selectedImageId) {
+        copySelectedImage();
+        return;
+    }
+
     const { startRow, startCol, endRow, endCol } = appState.selectionRange;
     const sheet = appState.sheets[appState.activeSheetName];
+    if (!sheet) return;
+
     const data = [];
+    const tsvLines = [];
 
     for (let r = startRow; r <= endRow; r++) {
         const rowData = [];
+        const tsvCells = [];
         for (let c = startCol; c <= endCol; c++) {
-            rowData.push(sheet[r][c]);
+            const val = sheet[r] ? sheet[r][c] : "";
+            rowData.push(val);
+            const disp = displayValue(val, r, c);
+            tsvCells.push(disp);
         }
         data.push(rowData);
+        tsvLines.push(tsvCells.join("\t"));
     }
 
     appState.clipboard = {
@@ -2583,6 +3083,12 @@ function copySelection() {
         range: { ...appState.selectionRange },
         data: data
     };
+
+    // Write TSV to system clipboard for Excel / Google Sheets
+    const tsvText = tsvLines.join("\n");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(tsvText).catch(() => {});
+    }
 
     // Add marching ants animation to copied cells
     document.querySelectorAll(".grid-cell.clipboard-copy").forEach(el => el.classList.remove("clipboard-copy"));
@@ -2597,16 +3103,170 @@ function copySelection() {
 }
 
 function cutSelection() {
+    if (appState.selectedImageId) {
+        copySelectedImage();
+        deleteSelectedImage();
+        showToast("Đã cắt hình ảnh (Ctrl+X)", "info");
+        return;
+    }
+
     copySelection();
-    appState.clipboard.type = "cut";
+    if (appState.clipboard) {
+        appState.clipboard.type = "cut";
+    }
     showToast("Đã cắt vùng chọn (Ctrl+X)", "info");
 }
 
-function pasteClipboard() {
+function copySelectedImage() {
+    if (!appState.selectedImageId) return;
+    const list = (appState.images && appState.images[appState.activeSheetName]) || [];
+    const imgObj = list.find(img => img.id === appState.selectedImageId);
+    if (!imgObj) return;
+
+    appState.imageClipboard = {
+        src: imgObj.src,
+        name: imgObj.name,
+        width: imgObj.width,
+        height: imgObj.height
+    };
+
+    showToast(`Đã sao chép hình ảnh: ${imgObj.name || 'Image'} (Ctrl+C)`, "info");
+}
+
+async function pasteClipboard() {
+    if (appState.isEditing) commitInlineEdit();
+
+    // 1. Check internal image clipboard first
+    if (appState.imageClipboard) {
+        const img = appState.imageClipboard;
+        const targetPos = getTargetPosForActiveCell();
+        insertImageOnSheet(img.src, img.name, targetPos.x + 20, targetPos.y + 20, img.width, img.height);
+        return;
+    }
+
+    // 2. Try reading system clipboard for image or text
+    if (navigator.clipboard && navigator.clipboard.read) {
+        try {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                const imgType = item.types.find(t => t.startsWith("image/"));
+                if (imgType) {
+                    const blob = await item.getType(imgType);
+                    const reader = new FileReader();
+                    reader.onload = (loadEvt) => {
+                        const targetPos = getTargetPosForActiveCell();
+                        insertImageOnSheet(loadEvt.target.result, "Pasted_Image.png", targetPos.x, targetPos.y);
+                    };
+                    reader.readAsDataURL(blob);
+                    return;
+                }
+            }
+        } catch (err) {}
+    }
+
+    // 3. Try reading system clipboard text
+    if (navigator.clipboard && navigator.clipboard.readText) {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text && text.trim()) {
+                pasteTextIntoGrid(text);
+                return;
+            }
+        } catch (err) {}
+    }
+
+    // 4. Fallback to appState.clipboard
+    if (appState.clipboard && appState.clipboard.data) {
+        applyInternalClipboardData();
+    }
+}
+
+function handlePasteEvent(e) {
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA")) {
+        if (!activeEl.classList.contains("grid-cell-input") && activeEl.id !== "formula-input-field") {
+            return;
+        }
+    }
+
+    const clipboardData = e.clipboardData || window.clipboardData;
+    if (!clipboardData) return;
+
+    // 1. Detect Image paste from clipboard (e.g. screenshot Win+Shift+S, copied image)
+    const items = clipboardData.items;
+    if (items) {
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type && items[i].type.indexOf("image") !== -1) {
+                e.preventDefault();
+                const file = items[i].getAsFile();
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (loadEvt) => {
+                        const targetPos = getTargetPosForActiveCell();
+                        insertImageOnSheet(loadEvt.target.result, file.name || "Pasted_Image.png", targetPos.x, targetPos.y);
+                    };
+                    reader.readAsDataURL(file);
+                    return;
+                }
+            }
+        }
+    }
+
+    // 2. Detect TSV / Text paste
+    const text = clipboardData.getData("text/plain");
+    if (text) {
+        if (appState.isEditing) return; // Allow typing paste inside cell input
+        e.preventDefault();
+        pasteTextIntoGrid(text);
+    }
+}
+
+function pasteTextIntoGrid(text) {
+    if (!text) return;
+    const cleanText = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    const rawRows = cleanText.split("\n");
+    if (rawRows.length > 0 && rawRows[rawRows.length - 1] === "") {
+        rawRows.pop();
+    }
+    if (rawRows.length === 0) return;
+
+    const parsedMatrix = rawRows.map(rowStr => rowStr.split("\t"));
+    const destR = appState.selectedCell.row;
+    const destC = appState.selectedCell.col;
+    const sheet = appState.sheets[appState.activeSheetName];
+    if (!sheet) return;
+
+    pushHistory();
+
+    const rows = parsedMatrix.length;
+    const cols = Math.max(...parsedMatrix.map(r => r.length), 1);
+
+    for (let r = 0; r < rows; r++) {
+        const targetR = destR + r;
+        while (targetR >= sheet.length) {
+            appendRowsToActiveSheet(25);
+        }
+        for (let c = 0; c < parsedMatrix[r].length; c++) {
+            const targetC = destC + c;
+            while (targetC >= sheet[0].length) {
+                appendColsToActiveSheet(10);
+            }
+            sheet[targetR][targetC] = parsedMatrix[r][c];
+        }
+    }
+
+    renderGrid();
+    updateCharts();
+    showToast(`Đã dán ${rows} hàng × ${cols} cột vào bảng tính!`, "success");
+}
+
+function applyInternalClipboardData() {
     if (!appState.clipboard || !appState.clipboard.data) return;
     const destR = appState.selectedCell.row;
     const destC = appState.selectedCell.col;
     const sheet = appState.sheets[appState.activeSheetName];
+    if (!sheet) return;
+
     pushHistory();
 
     const clipData = appState.clipboard.data;
@@ -2627,7 +3287,6 @@ function pasteClipboard() {
         }
     }
 
-    // If cut, erase original
     if (appState.clipboard.type === "cut" && appState.clipboard.sheet === appState.activeSheetName) {
         const src = appState.clipboard.range;
         for (let r = src.startRow; r <= src.endRow; r++) {
@@ -2647,6 +3306,383 @@ function pasteClipboard() {
 }
 
 // ==========================================================================
+// Sheet Image Management & Upload Engine
+// ==========================================================================
+
+function setupImageControls() {
+    const btnInsertImage = document.getElementById("btn-insert-image");
+    const imageFileInput = document.getElementById("image-file-input");
+
+    if (btnInsertImage && imageFileInput) {
+        btnInsertImage.addEventListener("click", () => {
+            imageFileInput.click();
+        });
+
+        imageFileInput.addEventListener("change", (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                Array.from(e.target.files).forEach(file => {
+                    handleImageFileUpload(file);
+                });
+                e.target.value = "";
+            }
+        });
+    }
+
+    // Deselect image when clicking elsewhere
+    document.addEventListener("mousedown", (e) => {
+        if (!e.target.closest(".sheet-image-card") && !e.target.closest(".sheet-image-toolbar")) {
+            deselectSheetImage();
+        }
+    });
+}
+
+function handleImageFileUpload(file, targetX = null, targetY = null) {
+    if (!file) return;
+    const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "image/svg+xml", "image/bmp"];
+    const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+    const validExts = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp"];
+
+    if (!validTypes.includes(file.type) && !validExts.includes(ext)) {
+        showToast("Vui lòng chọn định dạng file ảnh hợp lệ (.png, .jpg, .webp, .gif).", "warning");
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const dataUrl = e.target.result;
+        insertImageOnSheet(dataUrl, file.name, targetX, targetY);
+    };
+    reader.onerror = () => {
+        showToast("Lỗi khi đọc file ảnh từ máy tính.", "error");
+    };
+    reader.readAsDataURL(file);
+}
+
+function getTargetPosForActiveCell() {
+    const { row, col } = appState.selectedCell || { row: 0, col: 0 };
+    const cellEl = document.getElementById(`cell-${row}-${col}`);
+    if (cellEl) {
+        return {
+            x: Math.max(40, cellEl.offsetLeft + 10),
+            y: Math.max(30, cellEl.offsetTop + 10)
+        };
+    }
+    return { x: col * 110 + 50, y: row * 26 + 35 };
+}
+
+function insertImageOnSheet(dataUrl, name = "Image.png", targetX = null, targetY = null, width = 240, height = 180) {
+    if (!appState.images) appState.images = {};
+    if (!appState.images[appState.activeSheetName]) {
+        appState.images[appState.activeSheetName] = [];
+    }
+
+    if (targetX === null || targetY === null) {
+        const pos = getTargetPosForActiveCell();
+        targetX = pos.x;
+        targetY = pos.y;
+    }
+
+    const tempImg = new Image();
+    tempImg.onload = () => {
+        let finalW = width;
+        let finalH = height;
+        if (tempImg.width && tempImg.height) {
+            const aspect = tempImg.width / tempImg.height;
+            if (aspect >= 1) {
+                finalW = Math.min(Math.max(tempImg.width, 160), 380);
+                finalH = Math.round(finalW / aspect);
+            } else {
+                finalH = Math.min(Math.max(tempImg.height, 140), 320);
+                finalW = Math.round(finalH * aspect);
+            }
+        }
+
+        const id = "img-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+        const colIdx = Math.max(0, Math.floor((targetX - 40) / 110));
+        const rowIdx = Math.max(0, Math.floor((targetY - 30) / 26));
+
+        const imgObj = {
+            id: id,
+            src: dataUrl,
+            name: name,
+            x: Math.round(targetX),
+            y: Math.round(targetY),
+            width: finalW,
+            height: finalH,
+            col: colIdx,
+            row: rowIdx,
+            zIndex: (appState.images[appState.activeSheetName].length + 1) * 5 + 10
+        };
+
+        pushHistory();
+        appState.images[appState.activeSheetName].push(imgObj);
+        renderImages();
+        selectSheetImage(id);
+        showToast(`Đã tải và chèn ảnh: ${name}`, "success");
+    };
+    tempImg.onerror = () => {
+        showToast("Không thể tải định dạng hình ảnh này.", "error");
+    };
+    tempImg.src = dataUrl;
+}
+
+function renderImages() {
+    const gridEl = document.getElementById("grid-element");
+    if (!gridEl) return;
+
+    let container = document.getElementById("sheet-images-container");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "sheet-images-container";
+        container.className = "sheet-images-container";
+        gridEl.appendChild(container);
+    } else if (container.parentElement !== gridEl) {
+        gridEl.appendChild(container);
+    }
+
+    container.innerHTML = "";
+
+    const activeList = (appState.images && appState.images[appState.activeSheetName]) || [];
+    activeList.forEach(imgData => {
+        const card = createSheetImageElement(imgData);
+        container.appendChild(card);
+    });
+}
+
+function createSheetImageElement(imgData) {
+    const card = document.createElement("div");
+    card.className = "sheet-image-card" + (appState.selectedImageId === imgData.id ? " selected" : "");
+    card.id = imgData.id;
+    card.style.left = `${imgData.x}px`;
+    card.style.top = `${imgData.y}px`;
+    card.style.width = `${imgData.width}px`;
+    card.style.height = `${imgData.height}px`;
+    card.style.zIndex = imgData.zIndex || 10;
+
+    card.innerHTML = `
+        <div class="sheet-image-toolbar">
+            <button class="btn-img-tool" data-act="copy" title="Sao chép ảnh (Ctrl+C)">📋 Sao chép</button>
+            <button class="btn-img-tool" data-act="download" title="Tải ảnh về máy">💾 Lưu ảnh</button>
+            <button class="btn-img-tool" data-act="forward" title="Đưa lên trên">🔼 Lên trên</button>
+            <button class="btn-img-tool" data-act="backward" title="Đưa xuống dưới">🔽 Xuống dưới</button>
+            <button class="btn-img-tool btn-danger" data-act="delete" title="Xóa ảnh (Delete)">🗑️ Xóa</button>
+        </div>
+        <div class="sheet-image-inner">
+            <img src="${imgData.src}" alt="${imgData.name || 'Image'}" class="sheet-image-content" draggable="false">
+        </div>
+        <div class="img-resize-handle handle-nw" data-handle="nw"></div>
+        <div class="img-resize-handle handle-ne" data-handle="ne"></div>
+        <div class="img-resize-handle handle-sw" data-handle="sw"></div>
+        <div class="img-resize-handle handle-se" data-handle="se"></div>
+        <div class="img-resize-handle handle-n" data-handle="n"></div>
+        <div class="img-resize-handle handle-s" data-handle="s"></div>
+        <div class="img-resize-handle handle-w" data-handle="w"></div>
+        <div class="img-resize-handle handle-e" data-handle="e"></div>
+    `;
+
+    setupImageInteractions(card, imgData);
+
+    return card;
+}
+
+function setupImageInteractions(card, imgData) {
+    // 1. Click to select
+    card.addEventListener("mousedown", (e) => {
+        if (e.target.closest(".sheet-image-toolbar")) return;
+        if (e.target.classList.contains("img-resize-handle")) return;
+        e.stopPropagation();
+        selectSheetImage(imgData.id);
+
+        // Drag to move
+        let startX = e.clientX;
+        let startY = e.clientY;
+        let origLeft = card.offsetLeft;
+        let origTop = card.offsetTop;
+        let moved = false;
+
+        function onMouseMove(moveEvt) {
+            moveEvt.preventDefault();
+            const dx = moveEvt.clientX - startX;
+            const dy = moveEvt.clientY - startY;
+            if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+
+            const newLeft = Math.max(0, origLeft + dx);
+            const newTop = Math.max(0, origTop + dy);
+            card.style.left = `${newLeft}px`;
+            card.style.top = `${newTop}px`;
+        }
+
+        function onMouseUp() {
+            document.removeEventListener("mousemove", onMouseMove);
+            document.removeEventListener("mouseup", onMouseUp);
+
+            if (moved) {
+                imgData.x = Math.round(card.offsetLeft);
+                imgData.y = Math.round(card.offsetTop);
+                imgData.col = Math.max(0, Math.floor((imgData.x - 40) / 110));
+                imgData.row = Math.max(0, Math.floor((imgData.y - 30) / 26));
+                pushHistory();
+                setSaveStatus(false);
+            }
+        }
+
+        document.addEventListener("mousemove", onMouseMove);
+        document.addEventListener("mouseup", onMouseUp);
+    });
+
+    // 2. Toolbar buttons
+    card.querySelectorAll(".btn-img-tool").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const act = btn.getAttribute("data-act");
+            if (act === "copy") copySelectedImage();
+            else if (act === "download") downloadSheetImage(imgData);
+            else if (act === "forward") bringImageForward(imgData.id);
+            else if (act === "backward") sendImageBackward(imgData.id);
+            else if (act === "delete") deleteSelectedImage();
+        });
+    });
+
+    // 3. Resizing handles
+    card.querySelectorAll(".img-resize-handle").forEach(handle => {
+        handle.addEventListener("mousedown", (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const handleType = handle.getAttribute("data-handle");
+            let startX = e.clientX;
+            let startY = e.clientY;
+            let origW = card.offsetWidth;
+            let origH = card.offsetHeight;
+            let origLeft = card.offsetLeft;
+            let origTop = card.offsetTop;
+            let resized = false;
+
+            function onResizeMove(moveEvt) {
+                moveEvt.preventDefault();
+                resized = true;
+                const dx = moveEvt.clientX - startX;
+                const dy = moveEvt.clientY - startY;
+
+                let newW = origW;
+                let newH = origH;
+                let newLeft = origLeft;
+                let newTop = origTop;
+
+                if (handleType.includes("e")) newW = Math.max(40, origW + dx);
+                if (handleType.includes("s")) newH = Math.max(40, origH + dy);
+                if (handleType.includes("w")) {
+                    newW = Math.max(40, origW - dx);
+                    newLeft = origLeft + (origW - newW);
+                }
+                if (handleType.includes("n")) {
+                    newH = Math.max(40, origH - dy);
+                    newTop = origTop + (origH - newH);
+                }
+
+                card.style.width = `${newW}px`;
+                card.style.height = `${newH}px`;
+                card.style.left = `${newLeft}px`;
+                card.style.top = `${newTop}px`;
+            }
+
+            function onResizeUp() {
+                document.removeEventListener("mousemove", onResizeMove);
+                document.removeEventListener("mouseup", onResizeUp);
+
+                if (resized) {
+                    imgData.width = Math.round(card.offsetWidth);
+                    imgData.height = Math.round(card.offsetHeight);
+                    imgData.x = Math.round(card.offsetLeft);
+                    imgData.y = Math.round(card.offsetTop);
+                    imgData.col = Math.max(0, Math.floor((imgData.x - 40) / 110));
+                    imgData.row = Math.max(0, Math.floor((imgData.y - 30) / 26));
+                    pushHistory();
+                    setSaveStatus(false);
+                }
+            }
+
+            document.addEventListener("mousemove", onResizeMove);
+            document.addEventListener("mouseup", onResizeUp);
+        });
+    });
+}
+
+function selectSheetImage(id) {
+    appState.selectedImageId = id;
+    document.querySelectorAll(".sheet-image-card").forEach(c => {
+        if (c.id === id) c.classList.add("selected");
+        else c.classList.remove("selected");
+    });
+}
+
+function deselectSheetImage() {
+    appState.selectedImageId = null;
+    document.querySelectorAll(".sheet-image-card.selected").forEach(c => {
+        c.classList.remove("selected");
+    });
+}
+
+function deleteSelectedImage() {
+    if (!appState.selectedImageId) return;
+    const list = appState.images && appState.images[appState.activeSheetName];
+    if (!list) return;
+
+    pushHistory();
+    appState.images[appState.activeSheetName] = list.filter(img => img.id !== appState.selectedImageId);
+    appState.selectedImageId = null;
+    renderImages();
+    setSaveStatus(false);
+    showToast("Đã xóa hình ảnh khỏi trang tính", "info");
+}
+
+function nudgeSelectedImage(direction, amount = 2) {
+    if (!appState.selectedImageId) return;
+    const list = (appState.images && appState.images[appState.activeSheetName]) || [];
+    const imgObj = list.find(img => img.id === appState.selectedImageId);
+    if (!imgObj) return;
+
+    if (direction === "ArrowUp") imgObj.y = Math.max(0, imgObj.y - amount);
+    else if (direction === "ArrowDown") imgObj.y += amount;
+    else if (direction === "ArrowLeft") imgObj.x = Math.max(0, imgObj.x - amount);
+    else if (direction === "ArrowRight") imgObj.x += amount;
+
+    const el = document.getElementById(imgObj.id);
+    if (el) {
+        el.style.left = `${imgObj.x}px`;
+        el.style.top = `${imgObj.y}px`;
+    }
+}
+
+function bringImageForward(id) {
+    const list = (appState.images && appState.images[appState.activeSheetName]) || [];
+    const imgObj = list.find(img => img.id === id);
+    if (!imgObj) return;
+    const maxZ = Math.max(...list.map(i => i.zIndex || 10), 10);
+    imgObj.zIndex = maxZ + 2;
+    const el = document.getElementById(id);
+    if (el) el.style.zIndex = imgObj.zIndex;
+}
+
+function sendImageBackward(id) {
+    const list = (appState.images && appState.images[appState.activeSheetName]) || [];
+    const imgObj = list.find(img => img.id === id);
+    if (!imgObj) return;
+    const minZ = Math.min(...list.map(i => i.zIndex || 10), 10);
+    imgObj.zIndex = Math.max(2, minZ - 2);
+    const el = document.getElementById(id);
+    if (el) el.style.zIndex = imgObj.zIndex;
+}
+
+function downloadSheetImage(imgData) {
+    if (!imgData || !imgData.src) return;
+    const link = document.createElement("a");
+    link.href = imgData.src;
+    link.download = imgData.name || "sheet_image.png";
+    link.click();
+    showToast(`Đang tải ảnh: ${link.download}`, "success");
+}
+
+// ==========================================================================
 // Keyboard Navigation & Shortcuts
 // ==========================================================================
 function setupKeyboardShortcuts() {
@@ -2655,6 +3691,29 @@ function setupKeyboardShortcuts() {
         if (e.target && (e.target.classList.contains("grid-cell-input") || (e.target.closest && e.target.closest(".grid-cell-input")))) return;
         const activeTag = document.activeElement ? document.activeElement.tagName : "";
         if (activeTag === "INPUT" && document.activeElement.id !== "name-box-input") return;
+
+        // If an image on sheet is selected:
+        if (appState.selectedImageId) {
+            if (e.key === "Escape") {
+                deselectSheetImage();
+                return;
+            }
+            if (e.key === "Delete" || e.key === "Backspace") {
+                e.preventDefault();
+                deleteSelectedImage();
+                return;
+            }
+            if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+                e.preventDefault();
+                nudgeSelectedImage(e.key, e.shiftKey ? 10 : 2);
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+                e.preventDefault();
+                copySelectedImage();
+                return;
+            }
+        }
 
         const { row, col } = appState.selectedCell;
         const maxRow = appState.sheets[appState.activeSheetName].length;
@@ -2683,8 +3742,7 @@ function setupKeyboardShortcuts() {
                 return;
             }
             if (e.key === "v" || e.key === "V") {
-                e.preventDefault();
-                pasteClipboard();
+                // Let native 'paste' event fire so handlePasteEvent gets e.clipboardData with image/text
                 return;
             }
             if (e.key === "a" || e.key === "A") {
@@ -2714,7 +3772,7 @@ function setupKeyboardShortcuts() {
             }
             if (e.key === "s" || e.key === "S") {
                 e.preventDefault();
-                exportDirectXLSX();
+                saveCurrentFile();
                 return;
             }
         }
@@ -3045,7 +4103,8 @@ function buildExportPayload(cleanFilename) {
         sheets: trimmedSheets,
         styles: appState.styles,
         colWidths: appState.colWidths,
-        merges: appState.merges
+        merges: appState.merges,
+        images: appState.images || {}
     };
 }
 
@@ -3316,18 +4375,22 @@ function importExcelFile(file) {
 
             pushHistory();
             appState.filename = file.name;
+            appState.filepath = null;
             appState.sheets = newSheets;
             appState.styles = {};
             appState.colWidths = {};
             appState.rowHeights = {};
+            appState.filters = {};
             appState.activeSheetName = workbook.SheetNames[0];
 
             document.getElementById("workbook-filename").value = file.name;
+            document.title = `${file.name} - Excel Web Pro`;
             renderTabs();
             renderGrid();
             selectCell(0, 0);
 
             hideLoading();
+            setSaveStatus(true, "Đã mở");
             showToast(`Đã mở thành công file: ${file.name} (${workbook.SheetNames.length} sheet)`, "success");
 
         } catch (clientErr) {
@@ -3349,18 +4412,7 @@ function uploadViaServer(file) {
         return res.json();
     })
     .then(data => {
-        pushHistory();
-        appState.filename = data.filename;
-        appState.sheets = data.sheets;
-        appState.styles = data.styles || {};
-        appState.colWidths = data.colWidths || {};
-        appState.activeSheetName = Object.keys(data.sheets)[0];
-
-        document.getElementById("workbook-filename").value = data.filename;
-        renderTabs();
-        renderGrid();
-        selectCell(0, 0);
-
+        applyLoadedWorkbook(data);
         hideLoading();
         showToast(`Đã tải lên và mở file thành công: ${data.filename}`, "success");
     })
@@ -3547,6 +4599,13 @@ function setupContextMenu() {
     document.getElementById("ctx-cut").onclick = cutSelection;
     document.getElementById("ctx-copy").onclick = copySelection;
     document.getElementById("ctx-paste").onclick = pasteClipboard;
+    const ctxInsertImg = document.getElementById("ctx-insert-image");
+    if (ctxInsertImg) {
+        ctxInsertImg.onclick = () => {
+            const input = document.getElementById("image-file-input");
+            if (input) input.click();
+        };
+    }
     document.getElementById("ctx-insert-row").onclick = insertRowAbove;
     document.getElementById("ctx-insert-col").onclick = insertColLeft;
     document.getElementById("ctx-delete-row").onclick = deleteActiveRow;

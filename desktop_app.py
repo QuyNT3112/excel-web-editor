@@ -4,7 +4,7 @@ import time
 import socket
 import threading
 import logging
-from app import app
+from app import app, get_target_file_from_args
 
 # Silence unnecessary werkzeug log spam in desktop window mode
 log = logging.getLogger('werkzeug')
@@ -45,9 +45,17 @@ def debug_log(msg):
         pass
 
 def main():
-    debug_log("main() started")
+    debug_log(f"main() started, sys.argv: {sys.argv}")
     import webview
     debug_log("webview imported")
+
+    # Detect file passed via Open With or command line
+    target_file = get_target_file_from_args()
+    if target_file:
+        app.config['INITIAL_FILE_PATH'] = target_file
+        debug_log(f"Open with target file detected: {target_file}")
+    else:
+        debug_log("No target file specified in sys.argv")
 
     port = get_free_port()
     debug_log(f"port selected: {port}")
@@ -80,8 +88,9 @@ def main():
 
     # Create native Windows desktop application window
     debug_log("Creating window...")
+    window_title = f"{os.path.basename(target_file)} - Excel Web Pro" if target_file else "Excel Web Pro"
     window = webview.create_window(
-        title='Excel Web Pro',
+        title=window_title,
         url=f'http://127.0.0.1:{port}',
         width=1400,
         height=860,

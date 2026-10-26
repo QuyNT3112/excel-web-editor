@@ -24,11 +24,228 @@ app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024  # 32MB file limit
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    initial_path = app.config.get('INITIAL_FILE_PATH')
+    initial_filename = None
+    initial_data_json = None
+    if initial_path and os.path.isfile(initial_path):
+        initial_filename = os.path.basename(initial_path)
+        try:
+            import json
+            data = parse_spreadsheet_data(initial_path, initial_filename, filepath=initial_path)
+            initial_data_json = json.dumps(data).replace('</script>', '<\\/script>').replace('<!--', '<\\!--')
+        except Exception as e:
+            print(f"[Warn] Pre-parsing initial file failed: {e}")
+            
+    return render_template('index.html', initial_filename=initial_filename, initial_data_json=initial_data_json)
 
 @app.route('/health')
 def health():
     return jsonify({'status': 'ok', 'app': 'Excel Web Pro', 'version': '2.0.0'})
+
+def get_target_file_from_args():
+    if len(sys.argv) <= 1:
+        return None
+    for arg in sys.argv[1:]:
+        if not arg or arg.startswith('-'):
+            continue
+        cleaned = arg.strip('\'"')
+        if os.path.isfile(cleaned):
+            return os.path.abspath(cleaned)
+    combined = " ".join([a for a in sys.argv[1:] if not a.startswith('-')]).strip('\'"')
+    if os.path.isfile(combined):
+        return os.path.abspath(combined)
+    return None
+
+cli_initial = get_target_file_from_args()
+if cli_initial:
+    app.config['INITIAL_FILE_PATH'] = cli_initial
+
+def parse_spreadsheet_data(file_source, filename, filepath=None):
+    """
+    Parses a spreadsheet with high performance using iter_rows.
+    Supports CSV and Excel (.xlsx, .xlsm, .xltx, etc.).
+    Returns dict with filename, filepath, sheets, styles, colWidths, sheetNames.
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    
+    if ext == '.csv':
+        import csv
+        if isinstance(file_source, str) and os.path.isfile(file_source):
+            with open(file_source, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                content = f.read()
+        elif hasattr(file_source, 'read'):
+            raw = file_source.read()
+            content = raw.decode('utf-8-sig', errors='ignore') if isinstance(raw, bytes) else raw
+        elif isinstance(file_source, bytes):
+            content = file_source.decode('utf-8-sig', errors='ignore')
+        else:
+            content = str(file_source)
+
+        reader = csv.reader(io.StringIO(content))
+        sheet_data = [[c for c in row] for row in reader]
+        
+        row_count = max(len(sheet_data), 100)
+        col_count = max(max((len(r) for r in sheet_data), default=0), 26)
+        
+        padded_data = []
+        for r in range(row_count):
+            if r < len(sheet_data):
+                row = sheet_data[r]
+                padded_data.append(row + ["" for _ in range(col_count - len(row))])
+            else:
+                padded_data.append(["" for _ in range(col_count)])
+                
+        return {
+            'filename': filename,
+            'filepath': filepath or (file_source if isinstance(file_source, str) else None),
+            'sheets': {'Sheet1': padded_data},
+            'styles': {},
+            'colWidths': {},
+            'sheetNames': ['Sheet1']
+        }
+
+    # Excel file loading (.xlsx, .xlsm, etc.)
+    if isinstance(file_source, str) and os.path.isfile(file_source):
+        with open(file_source, 'rb') as f:
+            excel_bytes = f.read()
+        wb_source = io.BytesIO(excel_bytes)
+        file_path_recorded = file_source
+    elif hasattr(file_source, 'read'):
+        raw = file_source.read()
+        wb_source = io.BytesIO(raw) if isinstance(raw, bytes) else file_source
+        file_path_recorded = filepath
+    elif isinstance(file_source, bytes):
+        wb_source = io.BytesIO(file_source)
+        file_path_recorded = filepath
+    else:
+        wb_source = file_source
+        file_path_recorded = filepath
+
+    try:
+        wb = openpyxl.load_workbook(wb_source, data_only=False)
+    except Exception:
+        if hasattr(wb_source, 'seek'):
+            wb_source.seek(0)
+        wb = openpyxl.load_workbook(wb_source, data_only=True)
+    
+    sheets = {}
+    styles = {}
+    col_widths = {}
+    images = {}
+    import base64
+    import time
+    
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        actual_rows = ws.max_row or 0
+        actual_cols = ws.max_column or 0
+        target_rows = max(actual_rows, 100)
+        target_cols = max(actual_cols, 26)
+        
+        data_matrix = []
+        sheet_styles = {}
+        
+        if actual_rows > 0 and actual_cols > 0:
+            for r_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=actual_rows, min_col=1, max_col=actual_cols)):
+                row_vals = []
+                for c_idx, cell in enumerate(row):
+                    val = cell.value
+                    if val is None:
+                        row_vals.append("")
+                    elif isinstance(val, (int, float)):
+                        row_vals.append(val)
+                    else:
+                        row_vals.append(str(val))
+                    
+                    # Extract styles only if styled
+                    if cell.has_style:
+                        c_style = {}
+                        if cell.font:
+                            if cell.font.bold: c_style['bold'] = True
+                            if cell.font.italic: c_style['italic'] = True
+                            if cell.font.underline: c_style['underline'] = True
+                            if cell.font.color and cell.font.color.rgb and isinstance(cell.font.color.rgb, str):
+                                rgb = cell.font.color.rgb
+                                c_style['color'] = f"#{rgb[2:]}" if len(rgb) == 8 else f"#{rgb}"
+                        if cell.fill and cell.fill.fill_type == 'solid' and cell.fill.start_color:
+                            rgb = cell.fill.start_color.rgb
+                            if rgb and isinstance(rgb, str):
+                                c_style['bg'] = f"#{rgb[2:]}" if len(rgb) == 8 else f"#{rgb}"
+                        if cell.alignment:
+                            if cell.alignment.horizontal:
+                                c_style['align'] = cell.alignment.horizontal
+                            if cell.alignment.vertical:
+                                c_style['valign'] = cell.alignment.vertical
+                        if c_style:
+                            sheet_styles[f"{r_idx},{c_idx}"] = c_style
+                            
+                if len(row_vals) < target_cols:
+                    row_vals.extend([""] * (target_cols - len(row_vals)))
+                data_matrix.append(row_vals)
+                
+        # Fast padding of remaining rows
+        empty_row = [""] * target_cols
+        while len(data_matrix) < target_rows:
+            data_matrix.append(list(empty_row))
+            
+        sheets[sheet_name] = data_matrix
+        styles[sheet_name] = sheet_styles
+        
+        ws_widths = {}
+        for col_letter, col_dim in ws.column_dimensions.items():
+            if col_dim.width:
+                ws_widths[col_letter] = col_dim.width
+        col_widths[sheet_name] = ws_widths
+
+        # Extract images from worksheet
+        sheet_images = []
+        if hasattr(ws, '_images') and ws._images:
+            for idx, img in enumerate(ws._images):
+                try:
+                    raw_bytes = img._data()
+                    b64 = base64.b64encode(raw_bytes).decode('ascii')
+                    fmt = getattr(img, 'format', 'png') or 'png'
+                    data_url = f"data:image/{fmt.lower()};base64,{b64}"
+
+                    col_idx = 1
+                    row_idx = 1
+                    if hasattr(img, 'anchor') and hasattr(img.anchor, '_from'):
+                        col_idx = getattr(img.anchor._from, 'col', 0)
+                        row_idx = getattr(img.anchor._from, 'row', 0)
+                    elif isinstance(getattr(img, 'anchor', None), str):
+                        from openpyxl.utils import coordinate_to_tuple
+                        cr, cc = coordinate_to_tuple(img.anchor)
+                        row_idx = cr - 1
+                        col_idx = cc - 1
+
+                    w = getattr(img, 'width', 220) or 220
+                    h = getattr(img, 'height', 160) or 160
+
+                    sheet_images.append({
+                        'id': f"img-{idx}-{int(time.time() * 1000)}",
+                        'src': data_url,
+                        'name': f"Image_{idx + 1}.{fmt.lower()}",
+                        'col': col_idx,
+                        'row': row_idx,
+                        'x': col_idx * 110 + 40,
+                        'y': row_idx * 26 + 30,
+                        'width': int(w),
+                        'height': int(h),
+                        'zIndex': 10 + idx
+                    })
+                except Exception as img_err:
+                    print(f"[Warn] Could not extract image {idx}: {img_err}")
+        images[sheet_name] = sheet_images
+        
+    return {
+        'filename': filename,
+        'filepath': file_path_recorded,
+        'sheets': sheets,
+        'styles': styles,
+        'colWidths': col_widths,
+        'images': images,
+        'sheetNames': wb.sheetnames
+    }
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -44,102 +261,85 @@ def upload_file():
         return jsonify({'error': 'Unsupported file format. Please upload an Excel (.xlsx, .xls) or CSV file.'}), 400
     
     try:
-        if file.filename.lower().endswith('.csv'):
-            import csv
-            content = file.read().decode('utf-8-sig', errors='ignore')
-            reader = csv.reader(io.StringIO(content))
-            sheet_data = []
-            for row in reader:
-                sheet_data.append([c for c in row])
-            if not sheet_data:
-                sheet_data = [["" for _ in range(12)] for _ in range(25)]
-            return jsonify({
-                'filename': file.filename,
-                'sheets': {'Sheet1': sheet_data},
-                'sheetNames': ['Sheet1']
-            })
-
-        # Load workbook (data_only=False to preserve formulas)
-        wb = openpyxl.load_workbook(file, data_only=False)
-        
-        sheets = {}
-        styles = {}
-        col_widths = {}
-        
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            sheet_data = []
-            sheet_styles = {}
-            
-            max_row = max(ws.max_row or 0, 25)
-            max_col = max(ws.max_column or 0, 12)
-            
-            # Read cell values and styles
-            for r in range(1, max_row + 1):
-                row_data = []
-                for c in range(1, max_col + 1):
-                    cell = ws.cell(row=r, column=c)
-                    val = cell.value
-                    
-                    if val is None:
-                        val = ""
-                    elif isinstance(val, (int, float)):
-                        pass  # Keep numbers as is
-                    else:
-                        val = str(val)
-                    row_data.append(val)
-                    
-                    # Extract basic styling if present
-                    c_style = {}
-                    if cell.font:
-                        if cell.font.bold: c_style['bold'] = True
-                        if cell.font.italic: c_style['italic'] = True
-                        if cell.font.underline: c_style['underline'] = True
-                        if cell.font.color and cell.font.color.rgb and isinstance(cell.font.color.rgb, str):
-                            # rgb format AARRGGBB
-                            rgb = cell.font.color.rgb
-                            if len(rgb) == 8:
-                                c_style['color'] = f"#{rgb[2:]}"
-                            elif len(rgb) == 6:
-                                c_style['color'] = f"#{rgb}"
-                    if cell.fill and cell.fill.fill_type == 'solid' and cell.fill.start_color:
-                        rgb = cell.fill.start_color.rgb
-                        if rgb and isinstance(rgb, str):
-                            if len(rgb) == 8:
-                                c_style['bg'] = f"#{rgb[2:]}"
-                            elif len(rgb) == 6:
-                                c_style['bg'] = f"#{rgb}"
-                    if cell.alignment:
-                        if cell.alignment.horizontal:
-                            c_style['align'] = cell.alignment.horizontal
-                        if cell.alignment.vertical:
-                            c_style['valign'] = cell.alignment.vertical
-                    
-                    if c_style:
-                        sheet_styles[f"{r-1},{c-1}"] = c_style
-                        
-                sheet_data.append(row_data)
-                
-            sheets[sheet_name] = sheet_data
-            styles[sheet_name] = sheet_styles
-            
-            # Column widths
-            ws_widths = {}
-            for col_letter, col_dim in ws.column_dimensions.items():
-                if col_dim.width:
-                    ws_widths[col_letter] = col_dim.width
-            col_widths[sheet_name] = ws_widths
-            
-        return jsonify({
-            'filename': file.filename,
-            'sheets': sheets,
-            'styles': styles,
-            'colWidths': col_widths,
-            'sheetNames': wb.sheetnames
-        })
-        
+        data = parse_spreadsheet_data(file, file.filename)
+        return jsonify(data)
     except Exception as e:
         return jsonify({'error': f'Failed to process file: {str(e)}'}), 500
+
+@app.route('/api/initial-file', methods=['GET'])
+def get_initial_file():
+    initial_path = app.config.get('INITIAL_FILE_PATH')
+    if not initial_path or not os.path.isfile(initial_path):
+        return jsonify({'has_file': False})
+    
+    return jsonify({
+        'has_file': True,
+        'filename': os.path.basename(initial_path),
+        'filepath': initial_path
+    })
+
+@app.route('/api/load-initial-file', methods=['GET'])
+def load_initial_file():
+    initial_path = app.config.get('INITIAL_FILE_PATH')
+    if not initial_path or not os.path.isfile(initial_path):
+        return jsonify({'error': 'No initial file specified or file not found'}), 404
+    
+    filename = os.path.basename(initial_path)
+    try:
+        data = parse_spreadsheet_data(initial_path, filename, filepath=initial_path)
+        return jsonify(data)
+    except Exception as e:
+        # Fallback to serving raw bytes for client-side SheetJS parsing
+        return jsonify({
+            'fallback_to_raw': True,
+            'raw_url': '/api/initial-file/raw',
+            'filename': filename,
+            'filepath': initial_path,
+            'error': str(e)
+        })
+
+@app.route('/api/initial-file/raw', methods=['GET'])
+def get_initial_file_raw():
+    initial_path = app.config.get('INITIAL_FILE_PATH')
+    if not initial_path or not os.path.isfile(initial_path):
+        return "File not found", 404
+    return send_file(initial_path, as_attachment=False)
+
+@app.route('/api/save_in_place', methods=['POST'])
+def save_in_place():
+    data = None
+    if request.is_json:
+        data = request.get_json()
+    else:
+        import json
+        raw = request.form.get('payload') or request.form.get('data')
+        if raw:
+            try:
+                data = json.loads(raw)
+            except Exception:
+                data = None
+
+    if not data or 'sheets' not in data:
+        return jsonify({'error': 'Invalid request data'}), 400
+
+    filepath = data.get('filepath') or app.config.get('INITIAL_FILE_PATH')
+    if not filepath:
+        return jsonify({'error': 'No filepath specified'}), 400
+
+    parent_dir = os.path.dirname(filepath)
+    if parent_dir and not os.path.exists(parent_dir):
+        os.makedirs(parent_dir, exist_ok=True)
+
+    try:
+        wb, _ = generate_openpyxl_workbook(data)
+        wb.save(filepath)
+        return jsonify({
+            'success': True,
+            'saved_to': filepath,
+            'filename': os.path.basename(filepath)
+        })
+    except Exception as e:
+        return jsonify({'error': f'Failed to save file: {str(e)}'}), 500
 
 EXPORT_DIR = os.path.join(base_dir, 'exports')
 os.makedirs(EXPORT_DIR, exist_ok=True)
@@ -231,6 +431,33 @@ def generate_openpyxl_workbook(data):
                     ws.merge_cells(merge_range)
                 except Exception:
                     pass
+
+        # Embed images if provided
+        images_data = data.get('images', {})
+        if sheet_name in images_data:
+            from openpyxl.drawing.image import Image as OpenpyxlImage
+            import base64
+            for img_info in images_data[sheet_name]:
+                try:
+                    src = img_info.get('src', '')
+                    if not src:
+                        continue
+                    if ',' in src:
+                        src = src.split(',', 1)[1]
+                    raw_bytes = base64.b64decode(src)
+                    img_stream = io.BytesIO(raw_bytes)
+                    op_img = OpenpyxlImage(img_stream)
+                    if img_info.get('width'):
+                        op_img.width = int(img_info['width'])
+                    if img_info.get('height'):
+                        op_img.height = int(img_info['height'])
+                    
+                    c = int(img_info.get('col', 0))
+                    r = int(img_info.get('row', 0))
+                    anchor = f"{get_column_letter(c + 1)}{r + 1}"
+                    ws.add_image(op_img, anchor)
+                except Exception as img_err:
+                    print(f"[Warn] Failed to embed image on {sheet_name}: {img_err}")
                     
     return wb, clean_filename
 
@@ -332,6 +559,11 @@ def get_exported_file(token, filename):
     )
 
 if __name__ == '__main__':
+    cli_target = get_target_file_from_args()
+    if cli_target:
+        app.config['INITIAL_FILE_PATH'] = cli_target
+        print(f"Auto-opening spreadsheet file: {cli_target}")
+
     def open_browser():
         webbrowser.open('http://127.0.0.1:5000')
     threading.Timer(1.0, open_browser).start()

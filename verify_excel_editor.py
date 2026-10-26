@@ -99,8 +99,131 @@ class TestExcelWebEditor(unittest.TestCase):
         
         out_notes = out_wb['Notes']
         self.assertEqual(out_notes.cell(row=1, column=1).value, "Draft note")
-        
-        print("SUCCESS: All backend verification tests passed successfully!")
+
+    def test_open_with_initial_file_and_save_in_place(self):
+        """Test the Open with / CLI argument workflow and saving back in-place"""
+        import os, tempfile, sys
+        from app import get_target_file_from_args
+
+        # 1. Create a dummy test file simulating an Excel file opened from disk
+        temp_dir = tempfile.mkdtemp()
+        test_file = os.path.join(temp_dir, "MyReport.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Q1_Report"
+        ws['A1'] = "Category"
+        ws['B1'] = "Amount"
+        ws['A2'] = "Hardware"
+        ws['B2'] = 5000
+        ws['A3'] = "Services"
+        ws['B3'] = 2500
+        ws['A4'] = "Total"
+        ws['B4'] = "=SUM(B2:B3)"
+        wb.save(test_file)
+
+        # 2. Test command-line argument parser
+        orig_argv = sys.argv
+        sys.argv = ['ExcelWebPro.exe', test_file]
+        detected = get_target_file_from_args()
+        self.assertEqual(detected, os.path.abspath(test_file))
+        sys.argv = orig_argv
+
+        # 3. Test initial file check endpoint
+        app.config['INITIAL_FILE_PATH'] = test_file
+        res = self.app.get('/api/initial-file')
+        self.assertEqual(res.status_code, 200)
+        info = json.loads(res.data.decode('utf-8'))
+        self.assertTrue(info['has_file'])
+        self.assertEqual(info['filename'], 'MyReport.xlsx')
+
+        # 4. Test initial file load endpoint
+        load_res = self.app.get('/api/load-initial-file')
+        self.assertEqual(load_res.status_code, 200)
+        data = json.loads(load_res.data.decode('utf-8'))
+        self.assertIn('Q1_Report', data['sheets'])
+        q1_sheet = data['sheets']['Q1_Report']
+        self.assertEqual(q1_sheet[0][0], "Category")
+        self.assertEqual(q1_sheet[1][1], 5000)
+        self.assertEqual(q1_sheet[3][1], "=SUM(B2:B3)")
+
+        # 5. Modify cell value and test save_in_place
+        q1_sheet[1][1] = 6500
+        save_payload = {
+            'filename': 'MyReport.xlsx',
+            'filepath': test_file,
+            'sheets': data['sheets'],
+            'styles': data.get('styles', {})
+        }
+        save_res = self.app.post('/api/save_in_place', json=save_payload)
+        self.assertEqual(save_res.status_code, 200)
+        save_data = json.loads(save_res.data.decode('utf-8'))
+        self.assertTrue(save_data['success'])
+
+        # Verify disk file has the updated value
+        saved_wb = openpyxl.load_workbook(test_file, data_only=False)
+        self.assertEqual(saved_wb['Q1_Report']['B2'].value, 6500)
+        self.assertEqual(saved_wb['Q1_Report']['B4'].value, "=SUM(B2:B3)")
+
+        # Cleanup
+        app.config['INITIAL_FILE_PATH'] = None
+        import shutil
+        shutil.rmtree(temp_dir)
+        print("SUCCESS: All backend and Open With verification tests passed successfully!")
+
+    def test_image_upload_and_persistence(self):
+        """Test uploading images, embedding images in worksheets, and loading them back"""
+        import os, tempfile, base64, io, shutil
+        from PIL import Image as PILImage
+        from app import generate_openpyxl_workbook, parse_spreadsheet_data
+
+        # 1. Create a tiny test PNG base64
+        pil_img = PILImage.new('RGB', (80, 60), color='#10b981')
+        buf = io.BytesIO()
+        pil_img.save(buf, format='PNG')
+        buf.seek(0)
+        img_b64 = base64.b64encode(buf.read()).decode('ascii')
+        data_url = f"data:image/png;base64,{img_b64}"
+
+        temp_dir = tempfile.mkdtemp()
+        test_file = os.path.join(temp_dir, "ImageTest.xlsx")
+
+        payload = {
+            'filename': 'ImageTest.xlsx',
+            'filepath': test_file,
+            'sheets': {
+                'Sheet1': [["Photo", "Price"], ["Item 1", 100]]
+            },
+            'images': {
+                'Sheet1': [{
+                    'id': 'img-test-1',
+                    'src': data_url,
+                    'name': 'emerald_box.png',
+                    'col': 2,
+                    'row': 1,
+                    'width': 80,
+                    'height': 60
+                }]
+            }
+        }
+
+        # 2. Test generate_openpyxl_workbook with images
+        wb, clean_fn = generate_openpyxl_workbook(payload)
+        ws = wb['Sheet1']
+        self.assertEqual(len(ws._images), 1)
+        wb.save(test_file)
+
+        # 3. Test parse_spreadsheet_data extracts the image correctly
+        parsed = parse_spreadsheet_data(test_file, 'ImageTest.xlsx')
+        self.assertIn('images', parsed)
+        self.assertIn('Sheet1', parsed['images'])
+        extracted_images = parsed['images']['Sheet1']
+        self.assertEqual(len(extracted_images), 1)
+        self.assertTrue(extracted_images[0]['src'].startswith('data:image/png;base64,'))
+        self.assertEqual(extracted_images[0]['col'], 2)
+        self.assertEqual(extracted_images[0]['row'], 1)
+
+        shutil.rmtree(temp_dir)
+        print("SUCCESS: Image upload, embedding, and extraction tests passed successfully!")
 
 if __name__ == '__main__':
     unittest.main()
