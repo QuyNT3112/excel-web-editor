@@ -60,6 +60,27 @@ cli_initial = get_target_file_from_args()
 if cli_initial:
     app.config['INITIAL_FILE_PATH'] = cli_initial
 
+def extract_cell_color(color_obj):
+    if not color_obj:
+        return None
+    try:
+        rgb = getattr(color_obj, 'rgb', None)
+        if rgb and isinstance(rgb, str):
+            s = str(rgb)
+            if len(s) == 8:
+                return f"#{s[2:]}"
+            elif len(s) == 6:
+                return f"#{s}"
+        if getattr(color_obj, 'type', None) == 'theme':
+            theme_idx = getattr(color_obj, 'theme', None)
+            if theme_idx == 0:
+                return "#FFFFFF"
+            elif theme_idx == 1:
+                return "#000000"
+    except Exception:
+        pass
+    return None
+
 def parse_spreadsheet_data(file_source, filename, filepath=None):
     """
     Parses a spreadsheet with high performance using iter_rows.
@@ -101,6 +122,7 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
             'sheets': {'Sheet1': padded_data},
             'styles': {},
             'colWidths': {},
+            'rowHeights': {},
             'merges': {},
             'sheetNames': ['Sheet1']
         }
@@ -132,6 +154,7 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
     sheets = {}
     styles = {}
     col_widths = {}
+    row_heights = {}
     images = {}
     merges = {}
     import base64
@@ -173,18 +196,51 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
                             if cell.font.bold: c_style['bold'] = True
                             if cell.font.italic: c_style['italic'] = True
                             if cell.font.underline: c_style['underline'] = True
-                            if cell.font.color and cell.font.color.rgb and isinstance(cell.font.color.rgb, str):
-                                rgb = cell.font.color.rgb
-                                c_style['color'] = f"#{rgb[2:]}" if len(rgb) == 8 else f"#{rgb}"
+                            if cell.font.strike: c_style['strikethrough'] = True
+                            if cell.font.size:
+                                try:
+                                    c_style['fontSize'] = int(cell.font.size)
+                                except Exception:
+                                    pass
+                            if cell.font.name:
+                                c_style['fontFamily'] = cell.font.name
+                            font_col = extract_cell_color(cell.font.color)
+                            if font_col:
+                                c_style['color'] = font_col
+
                         if cell.fill and cell.fill.fill_type == 'solid' and cell.fill.start_color:
-                            rgb = cell.fill.start_color.rgb
-                            if rgb and isinstance(rgb, str):
-                                c_style['bg'] = f"#{rgb[2:]}" if len(rgb) == 8 else f"#{rgb}"
+                            bg_col = extract_cell_color(cell.fill.start_color)
+                            if bg_col:
+                                c_style['bg'] = bg_col
+
                         if cell.alignment:
                             if cell.alignment.horizontal:
-                                c_style['align'] = cell.alignment.horizontal
+                                h_align = cell.alignment.horizontal
+                                if h_align in ('center', 'centerContinuous'):
+                                    c_style['align'] = 'center'
+                                elif h_align in ('right', 'fill'):
+                                    c_style['align'] = 'right'
+                                elif h_align in ('left', 'justify', 'distributed'):
+                                    c_style['align'] = 'left'
+                                else:
+                                    c_style['align'] = h_align
                             if cell.alignment.vertical:
-                                c_style['valign'] = cell.alignment.vertical
+                                v_align = cell.alignment.vertical
+                                if v_align in ('center', 'middle'):
+                                    c_style['valign'] = 'center'
+                                elif v_align in ('top', 'bottom'):
+                                    c_style['valign'] = v_align
+                                else:
+                                    c_style['valign'] = 'center'
+                            if cell.alignment.wrap_text:
+                                c_style['wrap'] = True
+
+                        if cell.border:
+                            b = cell.border
+                            if (b.left and b.left.style) or (b.right and b.right.style) or \
+                               (b.top and b.top.style) or (b.bottom and b.bottom.style):
+                                c_style['border'] = True
+
                         if c_style:
                             sheet_styles[f"{r_idx},{c_idx}"] = c_style
                             
@@ -203,8 +259,25 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
         ws_widths = {}
         for col_letter, col_dim in ws.column_dimensions.items():
             if col_dim.width:
-                ws_widths[col_letter] = col_dim.width
+                try:
+                    w = float(col_dim.width)
+                    # Convert Excel character width to pixels: pixels = round(w * 8.0 + 5.0)
+                    px = max(40, round(w * 8.0 + 5.0))
+                    ws_widths[col_letter] = px
+                except Exception:
+                    pass
         col_widths[sheet_name] = ws_widths
+
+        ws_heights = {}
+        for r_num, row_dim in ws.row_dimensions.items():
+            if row_dim.height:
+                try:
+                    # r_num is 1-based row index in openpyxl -> convert to 0-based for JS grid
+                    # 1 pt = 1.3333 px at 96 DPI
+                    ws_heights[str(r_num - 1)] = max(24, round(float(row_dim.height) * 1.3333))
+                except Exception:
+                    pass
+        row_heights[sheet_name] = ws_heights
 
         # Extract images from worksheet
         sheet_images = []
@@ -252,6 +325,7 @@ def parse_spreadsheet_data(file_source, filename, filepath=None):
         'sheets': sheets,
         'styles': styles,
         'colWidths': col_widths,
+        'rowHeights': row_heights,
         'merges': merges,
         'images': images,
         'sheetNames': wb.sheetnames
@@ -431,7 +505,22 @@ def generate_openpyxl_workbook(data):
         if sheet_name in col_widths_data:
             for col_letter, width in col_widths_data[sheet_name].items():
                 try:
-                    ws.column_dimensions[col_letter].width = float(width)
+                    w_val = float(width)
+                    if w_val > 30:
+                        char_w = max(2.0, round((w_val - 5.0) / 8.0, 2))
+                    else:
+                        char_w = max(2.0, w_val)
+                    ws.column_dimensions[col_letter].width = char_w
+                except Exception:
+                    pass
+
+        row_heights_data = data.get('rowHeights', {})
+        if sheet_name in row_heights_data:
+            for row_str, h_val in row_heights_data[sheet_name].items():
+                try:
+                    r_idx = int(row_str)
+                    h_px = float(h_val)
+                    ws.row_dimensions[r_idx + 1].height = round(h_px / 1.3333, 1)
                 except Exception:
                     pass
                 

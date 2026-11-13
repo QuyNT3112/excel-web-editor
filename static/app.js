@@ -25,7 +25,7 @@ const appState = {
     undoStack: [],
     redoStack: [],
     charts: [],
-    theme: "dark",
+    theme: localStorage.getItem("excel_theme") || "light",
     zoom: 100,
     filters: {}, // { sheetName: { colIdx: [allowedValues] } }
     filterActiveCol: null,
@@ -1104,7 +1104,7 @@ function isRowMatchingFilters(r, sheetData, sheetFilters) {
 function createRowElement(r, colCount, sheetData, sheetStyles, colWidths, rowHeights) {
     const rowDiv = document.createElement("div");
     rowDiv.className = "grid-row";
-    const height = rowHeights[r] || 26;
+    const height = (rowHeights && (rowHeights[r] !== undefined ? rowHeights[r] : rowHeights[String(r)])) || 26;
     rowDiv.style.height = `${height}px`;
 
     // Filter check: hide row if it doesn't match active sheet filters
@@ -1150,7 +1150,8 @@ function createRowElement(r, colCount, sheetData, sheetStyles, colWidths, rowHei
                 }
                 let totalHeight = 0;
                 for (let row = merge.startRow; row <= merge.endRow; row++) {
-                    totalHeight += (rowHeights[row] || 26);
+                    const rh = (rowHeights && (rowHeights[row] !== undefined ? rowHeights[row] : rowHeights[String(row)])) || 26;
+                    totalHeight += rh;
                 }
                 cellDiv.style.width = `${totalWidth}px`;
                 cellDiv.style.minWidth = `${totalWidth}px`;
@@ -1390,6 +1391,7 @@ function setupInfiniteGridControls() {
 }
 
 function applyStyleToElement(el, s) {
+    if (!el || !s) return;
     if (s.bold) el.style.fontWeight = "700";
     if (s.italic) el.style.fontStyle = "italic";
     if (s.underline) el.style.textDecoration = "underline";
@@ -1398,12 +1400,16 @@ function applyStyleToElement(el, s) {
     if (s.fontFamily) el.style.fontFamily = s.fontFamily;
     if (s.color) el.style.color = s.color;
     if (s.bg) el.style.backgroundColor = s.bg;
-    if (s.align) el.style.justifyContent = s.align === "center" ? "center" : (s.align === "right" ? "flex-end" : "flex-start");
+    if (s.align) {
+        el.style.justifyContent = s.align === "center" ? "center" : (s.align === "right" ? "flex-end" : "flex-start");
+        el.style.textAlign = s.align;
+    }
     if (s.valign) el.style.alignItems = s.valign === "top" ? "flex-start" : (s.valign === "bottom" ? "flex-end" : "center");
-    if (s.border) el.style.border = "1px solid var(--border-color)";
+    if (s.border) el.style.border = "1px solid var(--border-grid)";
     if (s.wrap) {
         el.style.whiteSpace = "normal";
         el.style.wordBreak = "break-word";
+        el.style.lineHeight = "1.35";
     }
 }
 
@@ -4541,6 +4547,7 @@ function buildExportPayload(cleanFilename) {
         sheets: trimmedSheets,
         styles: appState.styles,
         colWidths: appState.colWidths,
+        rowHeights: appState.rowHeights,
         merges: appState.merges,
         images: appState.images || {}
     };
@@ -4777,9 +4784,34 @@ function setupModals() {
 
 function importExcelFile(file) {
     showLoading(`Đang đọc file: ${file.name}...`);
-    document.getElementById("upload-modal").classList.add("hidden");
+    const uploadModal = document.getElementById("upload-modal");
+    if (uploadModal) uploadModal.classList.add("hidden");
 
-    // Try SheetJS client reader first for maximum speed
+    // Primary: upload to local Python server for 100% openpyxl fidelity (styles, alignment, column widths, row heights, images)
+    uploadViaServer(file);
+}
+
+function uploadViaServer(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    fetch("/upload", { method: "POST", body: formData })
+    .then(res => {
+        if (!res.ok) return res.json().then(e => { throw new Error(e.error || "Lỗi tải file"); });
+        return res.json();
+    })
+    .then(data => {
+        applyLoadedWorkbook(data);
+        hideLoading();
+        showToast(`Đã tải lên và mở file thành công: ${data.filename}`, "success");
+    })
+    .catch(err => {
+        console.warn("Lỗi tải lên server, chuyển sang đọc offline bằng SheetJS:", err);
+        importViaClientSheetJS(file);
+    });
+}
+
+function importViaClientSheetJS(file) {
     const reader = new FileReader();
     reader.onload = function(e) {
         try {
@@ -4788,6 +4820,9 @@ function importExcelFile(file) {
 
             const newSheets = {};
             const newMerges = {};
+            const newColWidths = {};
+            const newRowHeights = {};
+
             workbook.SheetNames.forEach(sheetName => {
                 const ws = workbook.Sheets[sheetName];
                 const range = XLSX.utils.decode_range(ws["!ref"] || "A1:Z50");
@@ -4816,6 +4851,27 @@ function importExcelFile(file) {
                 } else {
                     newMerges[sheetName] = [];
                 }
+
+                if (ws["!cols"]) {
+                    const scw = {};
+                    ws["!cols"].forEach((col, idx) => {
+                        if (col) {
+                            const px = col.wpx || (col.wch ? Math.round(col.wch * 8 + 5) : (col.width ? Math.round(col.width * 8 + 5) : null));
+                            if (px) scw[colIndexToLetter(idx)] = px;
+                        }
+                    });
+                    newColWidths[sheetName] = scw;
+                }
+
+                if (ws["!rows"]) {
+                    const srh = {};
+                    ws["!rows"].forEach((row, idx) => {
+                        if (row && (row.hpx || row.hpt)) {
+                            srh[idx] = Math.round(row.hpx || (row.hpt * 1.3333));
+                        }
+                    });
+                    newRowHeights[sheetName] = srh;
+                }
             });
 
             pushHistory();
@@ -4823,8 +4879,8 @@ function importExcelFile(file) {
             appState.filepath = null;
             appState.sheets = newSheets;
             appState.styles = {};
-            appState.colWidths = {};
-            appState.rowHeights = {};
+            appState.colWidths = newColWidths;
+            appState.rowHeights = newRowHeights;
             appState.merges = newMerges;
             appState.filters = {};
             appState.activeSheetName = workbook.SheetNames[0];
@@ -4840,32 +4896,15 @@ function importExcelFile(file) {
             showToast(`Đã mở thành công file: ${file.name} (${workbook.SheetNames.length} sheet)`, "success");
 
         } catch (clientErr) {
-            // Fallback to server upload
-            uploadViaServer(file);
+            hideLoading();
+            showToast("Lỗi khi đọc file: " + clientErr.message, "error");
         }
     };
-    reader.onerror = () => uploadViaServer(file);
+    reader.onerror = () => {
+        hideLoading();
+        showToast("Lỗi khi đọc file", "error");
+    };
     reader.readAsArrayBuffer(file);
-}
-
-function uploadViaServer(file) {
-    const formData = new FormData();
-    formData.append("file", file);
-
-    fetch("/upload", { method: "POST", body: formData })
-    .then(res => {
-        if (!res.ok) return res.json().then(e => { throw new Error(e.error || "Lỗi tải file"); });
-        return res.json();
-    })
-    .then(data => {
-        applyLoadedWorkbook(data);
-        hideLoading();
-        showToast(`Đã tải lên và mở file thành công: ${data.filename}`, "success");
-    })
-    .catch(err => {
-        hideLoading();
-        showToast("Lỗi khi đọc file: " + err.message, "error");
-    });
 }
 
 // ==========================================================================
@@ -5124,18 +5163,32 @@ function setupZoomAndTheme() {
     const sunIcon = document.getElementById("theme-icon-sun");
     const moonIcon = document.getElementById("theme-icon-moon");
 
-    themeBtn.addEventListener("click", () => {
-        const nextTheme = appState.theme === "dark" ? "light" : "dark";
-        appState.theme = nextTheme;
-        document.documentElement.setAttribute("data-theme", nextTheme);
+    function updateThemeUI(theme) {
+        appState.theme = theme;
+        document.documentElement.setAttribute("data-theme", theme);
+        try {
+            localStorage.setItem("excel_theme", theme);
+        } catch (e) {}
 
-        if (nextTheme === "light") {
-            sunIcon.classList.remove("hidden");
-            moonIcon.classList.add("hidden");
+        if (theme === "light") {
+            // In light mode, show moon icon so user can switch to dark mode
+            if (sunIcon) sunIcon.classList.add("hidden");
+            if (moonIcon) moonIcon.classList.remove("hidden");
         } else {
-            sunIcon.classList.add("hidden");
-            moonIcon.classList.remove("hidden");
+            // In dark mode, show sun icon so user can switch to light mode
+            if (sunIcon) sunIcon.classList.remove("hidden");
+            if (moonIcon) moonIcon.classList.add("hidden");
         }
-        showToast(`Chuyển sang giao diện: ${nextTheme === "dark" ? "Tối (Dark Mode)" : "Sáng (Office Light)"}`, "info");
-    });
+    }
+
+    // Initialize theme state on startup
+    updateThemeUI(appState.theme);
+
+    if (themeBtn) {
+        themeBtn.addEventListener("click", () => {
+            const nextTheme = appState.theme === "dark" ? "light" : "dark";
+            updateThemeUI(nextTheme);
+            showToast(`Chuyển sang giao diện: ${nextTheme === "dark" ? "Tối (Dark Mode)" : "Sáng (Office Light)"}`, "info");
+        });
+    }
 }
