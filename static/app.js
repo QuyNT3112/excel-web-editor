@@ -3483,6 +3483,8 @@ function copySelection() {
 
     const data = [];
     const tsvLines = [];
+    const styles = {};
+    const sheetStyles = appState.styles[appState.activeSheetName] || {};
 
     for (let r = startRow; r <= endRow; r++) {
         const rowData = [];
@@ -3492,6 +3494,11 @@ function copySelection() {
             rowData.push(val);
             const disp = displayValue(val, r, c);
             tsvCells.push(disp);
+
+            const styleKey = `${r},${c}`;
+            if (sheetStyles[styleKey]) {
+                styles[`${r - startRow},${c - startCol}`] = JSON.parse(JSON.stringify(sheetStyles[styleKey]));
+            }
         }
         data.push(rowData);
         tsvLines.push(tsvCells.join("\t"));
@@ -3501,7 +3508,8 @@ function copySelection() {
         type: "copy",
         sheet: appState.activeSheetName,
         range: { ...appState.selectionRange },
-        data: data
+        data: data,
+        styles: styles
     };
 
     // Write TSV to system clipboard for Excel / Google Sheets
@@ -3530,11 +3538,40 @@ function cutSelection() {
         return;
     }
 
+    if (appState.isEditing) commitInlineEdit();
+
+    // 1. Copy data & styles into clipboard
     copySelection();
-    if (appState.clipboard) {
-        appState.clipboard.type = "cut";
+    if (!appState.clipboard || !appState.clipboard.data) return;
+    appState.clipboard.type = "cut";
+
+    // 2. Clear content and styles of selected cells/row
+    pushHistory();
+    const sheet = appState.sheets[appState.activeSheetName];
+    if (!sheet) return;
+
+    const { startRow, startCol, endRow, endCol } = appState.selectionRange;
+    const sheetStyles = appState.styles[appState.activeSheetName];
+
+    for (let r = startRow; r <= endRow; r++) {
+        if (!sheet[r]) continue;
+        for (let c = startCol; c <= endCol; c++) {
+            sheet[r][c] = "";
+            if (sheetStyles && sheetStyles[`${r},${c}`]) {
+                delete sheetStyles[`${r},${c}`];
+            }
+        }
     }
-    showToast("Đã cắt vùng chọn (Ctrl+X)", "info");
+
+    // Remove marching ants because cells are now cleared
+    document.querySelectorAll(".grid-cell.clipboard-copy").forEach(el => el.classList.remove("clipboard-copy"));
+
+    renderGrid();
+    updateFormulaBar();
+    updateStatusBarStats();
+    updateCharts();
+    setSaveStatus(false, "Chưa lưu");
+    showToast("Đã cắt dữ liệu vào bộ nhớ tạm (Ctrl+X)", "info");
 }
 
 function copySelectedImage() {
@@ -3675,8 +3712,23 @@ function pasteTextIntoGrid(text) {
         }
     }
 
+    // Transfer cell styles if available from internal clipboard
+    if (appState.clipboard && appState.clipboard.styles) {
+        if (!appState.styles[appState.activeSheetName]) appState.styles[appState.activeSheetName] = {};
+        const targetSheetStyles = appState.styles[appState.activeSheetName];
+        for (const [relKey, styleObj] of Object.entries(appState.clipboard.styles)) {
+            const [relR, relC] = relKey.split(",").map(Number);
+            const targetR = destR + relR;
+            const targetC = destC + relC;
+            targetSheetStyles[`${targetR},${targetC}`] = JSON.parse(JSON.stringify(styleObj));
+        }
+    }
+
     renderGrid();
+    updateFormulaBar();
+    updateStatusBarStats();
     updateCharts();
+    setSaveStatus(false, "Chưa lưu");
     showToast(`Đã dán ${rows} hàng × ${cols} cột vào bảng tính!`, "success");
 }
 
@@ -3707,21 +3759,23 @@ function applyInternalClipboardData() {
         }
     }
 
-    if (appState.clipboard.type === "cut" && appState.clipboard.sheet === appState.activeSheetName) {
-        const src = appState.clipboard.range;
-        for (let r = src.startRow; r <= src.endRow; r++) {
-            for (let c = src.startCol; c <= src.endCol; c++) {
-                if (r < destR || r >= destR + rows || c < destC || c >= destC + cols) {
-                    sheet[r][c] = "";
-                }
-            }
+    if (appState.clipboard.styles) {
+        if (!appState.styles[appState.activeSheetName]) appState.styles[appState.activeSheetName] = {};
+        const targetSheetStyles = appState.styles[appState.activeSheetName];
+        for (const [relKey, styleObj] of Object.entries(appState.clipboard.styles)) {
+            const [relR, relC] = relKey.split(",").map(Number);
+            const targetR = destR + relR;
+            const targetC = destC + relC;
+            targetSheetStyles[`${targetR},${targetC}`] = JSON.parse(JSON.stringify(styleObj));
         }
-        appState.clipboard = null;
     }
 
     document.querySelectorAll(".grid-cell.clipboard-copy").forEach(el => el.classList.remove("clipboard-copy"));
     renderGrid();
+    updateFormulaBar();
+    updateStatusBarStats();
     updateCharts();
+    setSaveStatus(false, "Chưa lưu");
     showToast("Đã dán dữ liệu thành công (Ctrl+V)", "success");
 }
 
