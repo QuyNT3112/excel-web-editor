@@ -493,14 +493,32 @@ def generate_openpyxl_workbook(data):
                             cell.fill = PatternFill(start_color=hex_bg, end_color=hex_bg, fill_type='solid')
                             
                     align_args = {}
-                    if c_style.get('align'): align_args['horizontal'] = c_style['align']
-                    if c_style.get('valign'): align_args['vertical'] = c_style['valign']
-                    if c_style.get('wrap'): align_args['wrap_text'] = True
+                    h_val = c_style.get('align')
+                    if h_val:
+                        if h_val in ('left', 'center', 'right', 'justify', 'distributed', 'fill', 'general', 'centerContinuous'):
+                            align_args['horizontal'] = h_val
+                    
+                    v_val = c_style.get('valign')
+                    if v_val:
+                        if v_val in ('middle', 'center'):
+                            align_args['vertical'] = 'center'
+                        elif v_val in ('top', 'bottom', 'justify', 'distributed'):
+                            align_args['vertical'] = v_val
+                            
+                    if c_style.get('wrap'):
+                        align_args['wrap_text'] = True
+                        
                     if align_args:
-                        cell.alignment = Alignment(**align_args)
+                        try:
+                            cell.alignment = Alignment(**align_args)
+                        except Exception:
+                            pass
                         
                     if c_style.get('border'):
-                        cell.border = border_all
+                        try:
+                            cell.border = border_all
+                        except Exception:
+                            pass
 
         if sheet_name in col_widths_data:
             for col_letter, width in col_widths_data[sheet_name].items():

@@ -229,16 +229,20 @@ async function saveCurrentFile() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
-            const result = await res.json();
+            const result = await res.json().catch(() => ({}));
             hideLoading();
-            if (result.success) {
+            if (res.ok && result.success) {
                 setSaveStatus(true, "Đã lưu");
                 showToast(`✅ Đã lưu trực tiếp vào: ${result.filename}!`, "success");
                 return;
+            } else {
+                console.warn("Lưu trực tiếp không thành công:", result.error);
+                showToast(`⚠️ Không thể lưu trực tiếp: ${result.error || "Lỗi không xác định"}, đang thử xuất ra Downloads...`, "warning");
             }
         } catch (err) {
             console.warn("Lưu trực tiếp thất bại, chuyển sang xuất file:", err);
             hideLoading();
+            showToast(`⚠️ Lỗi khi lưu file: ${err.message}`, "warning");
         }
     }
 
@@ -543,7 +547,7 @@ function toggleMergeCells() {
     const masterKey = `${newNorm.startRow},${newNorm.startCol}`;
     if (!sheetStyles[masterKey]) sheetStyles[masterKey] = {};
     sheetStyles[masterKey].align = "center";
-    sheetStyles[masterKey].valign = "middle";
+    sheetStyles[masterKey].valign = "center";
 
     const rangeStr = coordToA1(newNorm.startRow, newNorm.startCol) + ":" + coordToA1(newNorm.endRow, newNorm.endCol);
     currentMerges.push(rangeStr);
@@ -1087,7 +1091,7 @@ function loadTemplate(name) {
         
         // Header title
         rows[0][0] = "BÁO CÁO DOANH THU & LỢI NHUẬN NĂM 2026";
-        styles["0,0"] = { bold: true, fontSize: 14, color: "#107c41", align: "center", valign: "middle" };
+        styles["0,0"] = { bold: true, fontSize: 14, color: "#107c41", align: "center", valign: "center" };
         
         // Table Columns
         const headers = ["Tháng", "Doanh Thu (Tr.đ)", "Chi Phí (Tr.đ)", "Lợi Nhuận (Tr.đ)", "Tỷ Suất LN (%)", "Đánh Giá"];
@@ -3444,7 +3448,7 @@ function setupFormattingButtons() {
         applyStyleToSelection(s => { s.valign = "top"; });
     });
     document.getElementById("btn-valign-middle").addEventListener("click", () => {
-        applyStyleToSelection(s => { s.valign = "middle"; });
+        applyStyleToSelection(s => { s.valign = "center"; });
     });
     document.getElementById("btn-valign-bottom").addEventListener("click", () => {
         applyStyleToSelection(s => { s.valign = "bottom"; });
@@ -5143,32 +5147,51 @@ async function exportDirectXLSX() {
                     triggerNativeBrowserDownload(result.download_url, result.filename);
                 }
                 hideLoading();
+                setSaveStatus(true, "Đã lưu");
                 showToast(`✅ Đã lưu file: ${result.filename} về thư mục Downloads!`, "success");
                 return;
             }
         }
-        throw new Error("Prepare export failed");
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || "Không thể chuẩn bị file xuất trên máy chủ");
     } catch (err) {
-        console.warn("Direct server prepare failed, submitting native form:", err);
-        // Fallback: Submit form to /download
-        let form = document.getElementById("native-download-form");
-        if (!form) {
-            form = document.createElement("form");
-            form.id = "native-download-form";
-            form.method = "POST";
-            form.action = "/download";
-            form.style.display = "none";
-            document.body.appendChild(form);
+        console.warn("Direct server prepare failed, attempting download fetch:", err);
+        // Fallback 1: Try fetch /download as blob without navigating the window
+        try {
+            const dlResp = await fetch("/download", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (dlResp.ok) {
+                const blob = await dlResp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = cleanFilename;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => {
+                    try { a.remove(); } catch (e) {}
+                    URL.revokeObjectURL(url);
+                }, 1000);
+                hideLoading();
+                setSaveStatus(true, "Đã lưu");
+                showToast(`✅ Đã tải file: ${cleanFilename}!`, "success");
+                return;
+            }
+        } catch (fetchErr) {
+            console.warn("/download fetch failed, falling back to SheetJS:", fetchErr);
         }
-        form.innerHTML = "";
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = "payload";
-        input.value = JSON.stringify(payload);
-        form.appendChild(input);
-        form.submit();
+
+        // Fallback 2: SheetJS client-side export (does not navigate window)
         hideLoading();
-        showToast(`✅ Đã lưu file: ${cleanFilename} về thư mục Downloads!`, "success");
+        try {
+            exportViaSheetJS(payload, cleanFilename);
+            setSaveStatus(true, "Đã lưu");
+        } catch (clientErr) {
+            showToast(`❌ Xuất file thất bại: ${err.message}`, "error");
+        }
     }
 }
 
