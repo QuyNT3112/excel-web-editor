@@ -631,6 +631,339 @@ function shiftMergesOnColDelete(sheetName, colIdx) {
     appState.merges[sheetName] = updated;
 }
 
+// --------------------------------------------------------------------------
+// Row & Column Shift Helpers for Styles, Dimensions, Filters, Images, Formulas
+// --------------------------------------------------------------------------
+
+function shiftStylesOnRowInsert(sheetName, rowIdx) {
+    if (!appState.styles || !appState.styles[sheetName]) return;
+    const oldStyles = appState.styles[sheetName];
+    const newStyles = {};
+    for (const [key, val] of Object.entries(oldStyles)) {
+        const [r, c] = key.split(",").map(Number);
+        if (r >= rowIdx) {
+            newStyles[`${r + 1},${c}`] = val;
+        } else {
+            newStyles[key] = val;
+        }
+    }
+    appState.styles[sheetName] = newStyles;
+}
+
+function shiftStylesOnRowDelete(sheetName, rowIdx) {
+    if (!appState.styles || !appState.styles[sheetName]) return;
+    const oldStyles = appState.styles[sheetName];
+    const newStyles = {};
+    for (const [key, val] of Object.entries(oldStyles)) {
+        const [r, c] = key.split(",").map(Number);
+        if (r === rowIdx) {
+            continue;
+        } else if (r > rowIdx) {
+            newStyles[`${r - 1},${c}`] = val;
+        } else {
+            newStyles[key] = val;
+        }
+    }
+    appState.styles[sheetName] = newStyles;
+}
+
+function shiftStylesOnColInsert(sheetName, colIdx) {
+    if (!appState.styles || !appState.styles[sheetName]) return;
+    const oldStyles = appState.styles[sheetName];
+    const newStyles = {};
+    for (const [key, val] of Object.entries(oldStyles)) {
+        const [r, c] = key.split(",").map(Number);
+        if (c >= colIdx) {
+            newStyles[`${r},${c + 1}`] = val;
+        } else {
+            newStyles[key] = val;
+        }
+    }
+    appState.styles[sheetName] = newStyles;
+}
+
+function shiftStylesOnColDelete(sheetName, colIdx) {
+    if (!appState.styles || !appState.styles[sheetName]) return;
+    const oldStyles = appState.styles[sheetName];
+    const newStyles = {};
+    for (const [key, val] of Object.entries(oldStyles)) {
+        const [r, c] = key.split(",").map(Number);
+        if (c === colIdx) {
+            continue;
+        } else if (c > colIdx) {
+            newStyles[`${r},${c - 1}`] = val;
+        } else {
+            newStyles[key] = val;
+        }
+    }
+    appState.styles[sheetName] = newStyles;
+}
+
+function shiftColWidthsOnColInsert(sheetName, colIdx) {
+    if (!appState.colWidths || !appState.colWidths[sheetName]) return;
+    const oldWidths = appState.colWidths[sheetName];
+    const newWidths = {};
+    for (const [letter, width] of Object.entries(oldWidths)) {
+        const c = colLetterToIndex(letter);
+        if (c >= colIdx) {
+            newWidths[colIndexToLetter(c + 1)] = width;
+        } else {
+            newWidths[letter] = width;
+        }
+    }
+    appState.colWidths[sheetName] = newWidths;
+}
+
+function shiftColWidthsOnColDelete(sheetName, colIdx) {
+    if (!appState.colWidths || !appState.colWidths[sheetName]) return;
+    const oldWidths = appState.colWidths[sheetName];
+    const newWidths = {};
+    for (const [letter, width] of Object.entries(oldWidths)) {
+        const c = colLetterToIndex(letter);
+        if (c === colIdx) {
+            continue;
+        } else if (c > colIdx) {
+            newWidths[colIndexToLetter(c - 1)] = width;
+        } else {
+            newWidths[letter] = width;
+        }
+    }
+    appState.colWidths[sheetName] = newWidths;
+}
+
+function shiftRowHeightsOnRowInsert(sheetName, rowIdx) {
+    if (!appState.rowHeights || !appState.rowHeights[sheetName]) return;
+    const oldHeights = appState.rowHeights[sheetName];
+    const newHeights = {};
+    for (const [rStr, h] of Object.entries(oldHeights)) {
+        const r = parseInt(rStr, 10);
+        if (r >= rowIdx) {
+            newHeights[r + 1] = h;
+        } else {
+            newHeights[r] = h;
+        }
+    }
+    appState.rowHeights[sheetName] = newHeights;
+}
+
+function shiftRowHeightsOnRowDelete(sheetName, rowIdx) {
+    if (!appState.rowHeights || !appState.rowHeights[sheetName]) return;
+    const oldHeights = appState.rowHeights[sheetName];
+    const newHeights = {};
+    for (const [rStr, h] of Object.entries(oldHeights)) {
+        const r = parseInt(rStr, 10);
+        if (r === rowIdx) {
+            continue;
+        } else if (r > rowIdx) {
+            newHeights[r - 1] = h;
+        } else {
+            newHeights[r] = h;
+        }
+    }
+    appState.rowHeights[sheetName] = newHeights;
+}
+
+function shiftFiltersOnColInsert(sheetName, colIdx) {
+    if (!appState.filters || !appState.filters[sheetName]) return;
+    const oldFilters = appState.filters[sheetName];
+    const newFilters = {};
+    for (const [cStr, filterVal] of Object.entries(oldFilters)) {
+        const c = parseInt(cStr, 10);
+        if (c >= colIdx) {
+            newFilters[c + 1] = filterVal;
+        } else {
+            newFilters[c] = filterVal;
+        }
+    }
+    appState.filters[sheetName] = newFilters;
+}
+
+function shiftFiltersOnColDelete(sheetName, colIdx) {
+    if (!appState.filters || !appState.filters[sheetName]) return;
+    const oldFilters = appState.filters[sheetName];
+    const newFilters = {};
+    for (const [cStr, filterVal] of Object.entries(oldFilters)) {
+        const c = parseInt(cStr, 10);
+        if (c === colIdx) {
+            continue;
+        } else if (c > colIdx) {
+            newFilters[c - 1] = filterVal;
+        } else {
+            newFilters[c] = filterVal;
+        }
+    }
+    appState.filters[sheetName] = newFilters;
+}
+
+function shiftImagesOnRowDelete(sheetName, rowIdx) {
+    const list = appState.images && appState.images[sheetName];
+    if (!list) return;
+    appState.images[sheetName] = list.filter(img => {
+        if (img.row === rowIdx) return false;
+        if (img.row > rowIdx) img.row--;
+        return true;
+    });
+}
+
+function shiftImagesOnRowInsert(sheetName, rowIdx) {
+    const list = appState.images && appState.images[sheetName];
+    if (!list) return;
+    list.forEach(img => {
+        if (img.row >= rowIdx) img.row++;
+    });
+}
+
+function shiftImagesOnColDelete(sheetName, colIdx) {
+    const list = appState.images && appState.images[sheetName];
+    if (!list) return;
+    appState.images[sheetName] = list.filter(img => {
+        if (img.col === colIdx) return false;
+        if (img.col > colIdx) img.col--;
+        return true;
+    });
+}
+
+function shiftImagesOnColInsert(sheetName, colIdx) {
+    const list = appState.images && appState.images[sheetName];
+    if (!list) return;
+    list.forEach(img => {
+        if (img.col >= colIdx) img.col++;
+    });
+}
+
+function shiftFormulaString(formulaStr, opType, opIdx) {
+    if (typeof formulaStr !== "string" || !formulaStr.startsWith("=")) return formulaStr;
+
+    // 1. Shift ranges first: e.g. B2:E2 or D2:D4
+    let res = formulaStr.replace(/(\$?)([A-Za-z]+)(\$?)(\d+)\s*:\s*(\$?)([A-Za-z]+)(\$?)(\d+)/g, (match, d1, col1, d2, row1, d3, col2, d4, row2) => {
+        let c1 = colLetterToIndex(col1);
+        let r1 = parseInt(row1, 10) - 1;
+        let c2 = colLetterToIndex(col2);
+        let r2 = parseInt(row2, 10) - 1;
+
+        if (c1 > c2) { const t = c1; c1 = c2; c2 = t; }
+        if (r1 > r2) { const t = r1; r1 = r2; r2 = t; }
+
+        if (opType === "deleteCol") {
+            if (c1 === opIdx && c2 === opIdx) return "#REF!";
+            if (c1 === opIdx) c1 = opIdx;
+            else if (c1 > opIdx) c1--;
+            if (c2 >= opIdx && c2 > c1) c2--;
+        } else if (opType === "insertCol") {
+            if (c1 >= opIdx) c1++;
+            if (c2 >= opIdx) c2++;
+        } else if (opType === "deleteRow") {
+            if (r1 === opIdx && r2 === opIdx) return "#REF!";
+            if (r1 === opIdx) r1 = opIdx;
+            else if (r1 > opIdx) r1--;
+            if (r2 >= opIdx && r2 > r1) r2--;
+        } else if (opType === "insertRow") {
+            if (r1 >= opIdx) r1++;
+            if (r2 >= opIdx) r2++;
+        }
+
+        return `${d1}${colIndexToLetter(c1)}${d2}${r1 + 1}:${d3}${colIndexToLetter(c2)}${d4}${r2 + 1}`;
+    });
+
+    // 2. Shift single cell references
+    res = res.replace(/(\$?)([A-Za-z]+)(\$?)(\d+)/g, (match, d1, col, d2, row, offset, fullStr) => {
+        if (offset > 0 && fullStr[offset - 1] === ":") return match;
+        const nextChar = fullStr[offset + match.length];
+        if (nextChar === ":") return match;
+
+        let c = colLetterToIndex(col);
+        let r = parseInt(row, 10) - 1;
+
+        if (opType === "deleteCol") {
+            if (c === opIdx) return "#REF!";
+            if (c > opIdx) c--;
+        } else if (opType === "insertCol") {
+            if (c >= opIdx) c++;
+        } else if (opType === "deleteRow") {
+            if (r === opIdx) return "#REF!";
+            if (r > opIdx) r--;
+        } else if (opType === "insertRow") {
+            if (r >= opIdx) r++;
+        }
+
+        return `${d1}${colIndexToLetter(c)}${d2}${r + 1}`;
+    });
+
+    return res;
+}
+
+function updateFormulasOnColDelete(sheetName, colIdx) {
+    const sheet = appState.sheets[sheetName];
+    if (!sheet) return;
+    for (let r = 0; r < sheet.length; r++) {
+        for (let c = 0; c < sheet[r].length; c++) {
+            const val = sheet[r][c];
+            if (typeof val === "string" && val.startsWith("=")) {
+                const shifted = shiftFormulaString(val, "deleteCol", colIdx);
+                if (shifted.includes("#REF!")) {
+                    const curVal = displayValue(val, r, c);
+                    if (curVal && curVal !== "#ERROR!" && curVal !== "#VALUE!") {
+                        sheet[r][c] = curVal;
+                    } else {
+                        sheet[r][c] = shifted;
+                    }
+                } else {
+                    sheet[r][c] = shifted;
+                }
+            }
+        }
+    }
+}
+
+function updateFormulasOnRowDelete(sheetName, rowIdx) {
+    const sheet = appState.sheets[sheetName];
+    if (!sheet) return;
+    for (let r = 0; r < sheet.length; r++) {
+        for (let c = 0; c < sheet[r].length; c++) {
+            const val = sheet[r][c];
+            if (typeof val === "string" && val.startsWith("=")) {
+                const shifted = shiftFormulaString(val, "deleteRow", rowIdx);
+                if (shifted.includes("#REF!")) {
+                    const curVal = displayValue(val, r, c);
+                    if (curVal && curVal !== "#ERROR!" && curVal !== "#VALUE!") {
+                        sheet[r][c] = curVal;
+                    } else {
+                        sheet[r][c] = shifted;
+                    }
+                } else {
+                    sheet[r][c] = shifted;
+                }
+            }
+        }
+    }
+}
+
+function updateFormulasOnColInsert(sheetName, colIdx) {
+    const sheet = appState.sheets[sheetName];
+    if (!sheet) return;
+    for (let r = 0; r < sheet.length; r++) {
+        for (let c = 0; c < sheet[r].length; c++) {
+            const val = sheet[r][c];
+            if (typeof val === "string" && val.startsWith("=")) {
+                sheet[r][c] = shiftFormulaString(val, "insertCol", colIdx);
+            }
+        }
+    }
+}
+
+function updateFormulasOnRowInsert(sheetName, rowIdx) {
+    const sheet = appState.sheets[sheetName];
+    if (!sheet) return;
+    for (let r = 0; r < sheet.length; r++) {
+        for (let c = 0; c < sheet[r].length; c++) {
+            const val = sheet[r][c];
+            if (typeof val === "string" && val.startsWith("=")) {
+                sheet[r][c] = shiftFormulaString(val, "insertRow", rowIdx);
+            }
+        }
+    }
+}
+
 function showToast(message, type = "info") {
     const container = document.getElementById("toast-container");
     const toast = document.createElement("div");
@@ -1416,11 +1749,17 @@ function applyStyleToElement(el, s) {
 // ==========================================================================
 // Cell Selection & Drag-to-Select (High Performance Event Delegation)
 // ==========================================================================
+let cellMouseDownTarget = null;
+let cellMouseDownWasActive = false;
+
 function setupGridEventDelegation() {
     const gridEl = document.getElementById("grid-element");
     if (!gridEl) return;
 
     gridEl.addEventListener("mousedown", (e) => {
+        if (e.target.classList.contains("grid-cell-input") || e.target.closest(".grid-cell-input")) {
+            return;
+        }
         const cell = e.target.closest(".grid-cell");
         if (cell) {
             const r = parseInt(cell.getAttribute("data-row"), 10);
@@ -1439,12 +1778,33 @@ function setupGridEventDelegation() {
         }
     });
 
-    gridEl.addEventListener("dblclick", (e) => {
+    gridEl.addEventListener("click", (e) => {
+        if (e.target.classList.contains("grid-cell-input") || e.target.closest(".grid-cell-input")) {
+            return;
+        }
         const cell = e.target.closest(".grid-cell");
         if (cell) {
             const r = parseInt(cell.getAttribute("data-row"), 10);
             const c = parseInt(cell.getAttribute("data-col"), 10);
-            if (!isNaN(r) && !isNaN(c)) startInlineEditing(r, c);
+            if (!isNaN(r) && !isNaN(c)) {
+                if (cellMouseDownWasActive && cellMouseDownTarget &&
+                    cellMouseDownTarget.row === r && cellMouseDownTarget.col === c &&
+                    !appState.isEditing && !e.shiftKey) {
+                    startInlineEditing(r, c, null, e);
+                }
+            }
+        }
+    });
+
+    gridEl.addEventListener("dblclick", (e) => {
+        if (e.target.classList.contains("grid-cell-input") || e.target.closest(".grid-cell-input")) {
+            return;
+        }
+        const cell = e.target.closest(".grid-cell");
+        if (cell) {
+            const r = parseInt(cell.getAttribute("data-row"), 10);
+            const c = parseInt(cell.getAttribute("data-col"), 10);
+            if (!isNaN(r) && !isNaN(c)) startInlineEditing(r, c, null, e);
         }
     });
 }
@@ -1454,6 +1814,12 @@ function onCellMouseDown(e, r, c) {
     if (appState.isEditing) commitInlineEdit();
 
     const merge = findMergeForCell(r, c);
+    const targetR = merge ? merge.startRow : r;
+    const targetC = merge ? merge.startCol : c;
+
+    cellMouseDownWasActive = (!appState.isEditing && appState.selectedCell &&
+        appState.selectedCell.row === targetR && appState.selectedCell.col === targetC);
+    cellMouseDownTarget = { row: targetR, col: targetC };
 
     if (e.shiftKey && appState.selectedCell) {
         // Range select with Shift
@@ -1967,17 +2333,75 @@ function autoFitAllRows() {
 // ==========================================================================
 // Inline & Formula Bar Editing
 // ==========================================================================
-function startInlineEditing(r, c, initialChar = null) {
+function getCaretOffsetFromPoint(containerEl, clientX, clientY) {
+    if (!containerEl) return -1;
+    // Method 1: caretRangeFromPoint (WebKit, Blink, Edge WebView2)
+    if (document.caretRangeFromPoint) {
+        try {
+            const range = document.caretRangeFromPoint(clientX, clientY);
+            if (range) {
+                let offset = 0;
+                const walker = document.createTreeWalker(containerEl, NodeFilter.SHOW_TEXT, null, false);
+                let node;
+                let found = false;
+                while ((node = walker.nextNode())) {
+                    if (node === range.startContainer) {
+                        offset += range.startOffset;
+                        found = true;
+                        break;
+                    }
+                    offset += node.nodeValue.length;
+                }
+                if (found) return offset;
+                if (range.startContainer === containerEl) {
+                    return range.startOffset;
+                }
+            }
+        } catch (err) {}
+    }
+    // Method 2: caretPositionFromPoint (Standard W3C)
+    if (document.caretPositionFromPoint) {
+        try {
+            const pos = document.caretPositionFromPoint(clientX, clientY);
+            if (pos) {
+                let offset = 0;
+                const walker = document.createTreeWalker(containerEl, NodeFilter.SHOW_TEXT, null, false);
+                let node;
+                let found = false;
+                while ((node = walker.nextNode())) {
+                    if (node === pos.offsetNode) {
+                        offset += pos.offset;
+                        found = true;
+                        break;
+                    }
+                    offset += node.nodeValue.length;
+                }
+                if (found) return offset;
+                if (pos.offsetNode === containerEl) {
+                    return pos.offset;
+                }
+            }
+        } catch (err) {}
+    }
+    return -1;
+}
+
+function startInlineEditing(r, c, initialChar = null, mouseEvent = null) {
     if (appState.isEditing) commitInlineEdit();
     const merge = findMergeForCell(r, c);
     const targetR = merge ? merge.startRow : r;
     const targetC = merge ? merge.startCol : c;
 
-    appState.isEditing = true;
-    document.getElementById("status-mode-indicator").textContent = "CHỈNH SỬA";
-
     const cellEl = document.getElementById(`cell-${targetR}-${targetC}`);
     if (!cellEl) return;
+
+    let targetCaretPos = -1;
+    if (mouseEvent && mouseEvent.clientX !== undefined) {
+        targetCaretPos = getCaretOffsetFromPoint(cellEl, mouseEvent.clientX, mouseEvent.clientY);
+    }
+
+    appState.isEditing = true;
+    document.getElementById("status-mode-indicator").textContent = "CHỈNH SỬA";
 
     const sheet = appState.sheets[appState.activeSheetName];
     const currentRawVal = cellToString(sheet[targetR][targetC]);
@@ -1986,6 +2410,29 @@ function startInlineEditing(r, c, initialChar = null) {
     input.type = "text";
     input.className = "grid-cell-input";
     
+    // Style matching with cell to eliminate layout jump
+    const styleKey = `${targetR},${targetC}`;
+    const cellStyle = (appState.styles[appState.activeSheetName] && appState.styles[appState.activeSheetName][styleKey]) || {};
+    if (cellStyle.fontSize) input.style.fontSize = `${cellStyle.fontSize}px`;
+    if (cellStyle.fontFamily) input.style.fontFamily = cellStyle.fontFamily;
+    if (cellStyle.bold) input.style.fontWeight = "700";
+    if (cellStyle.italic) input.style.fontStyle = "italic";
+    if (cellStyle.color) input.style.color = cellStyle.color;
+    if (cellStyle.align) {
+        input.style.textAlign = cellStyle.align;
+    } else {
+        const computedAlign = window.getComputedStyle(cellEl).textAlign;
+        input.style.textAlign = computedAlign || "left";
+    }
+    input.style.padding = "0 4px";
+    input.style.boxSizing = "border-box";
+    input.style.backgroundColor = cellStyle.bg || "var(--cell-bg, #ffffff)";
+
+    // Prevent mousedown, click, dblclick from bubbling out of editor
+    input.addEventListener("mousedown", (e) => e.stopPropagation());
+    input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("dblclick", (e) => e.stopPropagation());
+
     if (initialChar !== null) {
         input.value = initialChar;
     } else {
@@ -1994,8 +2441,11 @@ function startInlineEditing(r, c, initialChar = null) {
 
     cellEl.appendChild(input);
     input.focus();
+
     if (initialChar !== null) {
         input.setSelectionRange(input.value.length, input.value.length);
+    } else if (targetCaretPos >= 0 && targetCaretPos <= input.value.length) {
+        input.setSelectionRange(targetCaretPos, targetCaretPos);
     } else {
         input.select();
     }
@@ -2277,10 +2727,12 @@ function updateStatusBarStats() {
 function displayValue(val, r, c) {
     const str = cellToString(val);
     if (!str.startsWith("=")) return str;
+    if (str.includes("#REF!")) return "#REF!";
     try {
         const evaluated = evaluateFormula(str, r, c);
         return evaluated !== null && evaluated !== undefined ? String(evaluated) : "#VALUE!";
     } catch (e) {
+        if (e && e.message === "Circular reference") return "#CIRCULAR!";
         return "#ERROR!";
     }
 }
@@ -2288,6 +2740,7 @@ function displayValue(val, r, c) {
 let evaluationCallStack = [];
 
 function evaluateFormula(formulaStr, currentR, currentC) {
+    if (formulaStr.includes("#REF!")) return "#REF!";
     const cellKey = `${appState.activeSheetName}!${currentR},${currentC}`;
     if (evaluationCallStack.includes(cellKey)) {
         throw new Error("Circular reference");
@@ -3420,11 +3873,16 @@ function setupFilterPopoverGlobalEvents() {
 // ==========================================================================
 function insertRowAbove() {
     const rowIdx = appState.selectedCell.row;
-    const sheet = appState.sheets[appState.activeSheetName];
+    const sheetName = appState.activeSheetName;
+    const sheet = appState.sheets[sheetName];
     pushHistory();
+    updateFormulasOnRowInsert(sheetName, rowIdx);
     const cols = sheet[0] ? sheet[0].length : 14;
     sheet.splice(rowIdx, 0, Array(cols).fill(""));
-    shiftMergesOnRowInsert(appState.activeSheetName, rowIdx);
+    shiftStylesOnRowInsert(sheetName, rowIdx);
+    shiftRowHeightsOnRowInsert(sheetName, rowIdx);
+    shiftMergesOnRowInsert(sheetName, rowIdx);
+    shiftImagesOnRowInsert(sheetName, rowIdx);
     renderGrid();
     selectCell(rowIdx, appState.selectedCell.col);
     showToast(`Đã chèn hàng mới tại vị trí ${rowIdx + 1}`, "success");
@@ -3432,10 +3890,16 @@ function insertRowAbove() {
 
 function insertColLeft() {
     const colIdx = appState.selectedCell.col;
-    const sheet = appState.sheets[appState.activeSheetName];
+    const sheetName = appState.activeSheetName;
+    const sheet = appState.sheets[sheetName];
     pushHistory();
+    updateFormulasOnColInsert(sheetName, colIdx);
     sheet.forEach(row => row.splice(colIdx, 0, ""));
-    shiftMergesOnColInsert(appState.activeSheetName, colIdx);
+    shiftStylesOnColInsert(sheetName, colIdx);
+    shiftColWidthsOnColInsert(sheetName, colIdx);
+    shiftFiltersOnColInsert(sheetName, colIdx);
+    shiftMergesOnColInsert(sheetName, colIdx);
+    shiftImagesOnColInsert(sheetName, colIdx);
     renderGrid();
     selectCell(appState.selectedCell.row, colIdx);
     showToast(`Đã chèn cột mới tại vị trí ${colIndexToLetter(colIdx)}`, "success");
@@ -3443,11 +3907,19 @@ function insertColLeft() {
 
 function deleteActiveRow() {
     const rowIdx = appState.selectedCell.row;
-    const sheet = appState.sheets[appState.activeSheetName];
+    const sheetName = appState.activeSheetName;
+    const sheet = appState.sheets[sheetName];
     if (sheet.length <= 1) return showToast("Không thể xóa hàng duy nhất còn lại", "error");
     pushHistory();
+    updateFormulasOnRowDelete(sheetName, rowIdx);
     sheet.splice(rowIdx, 1);
-    shiftMergesOnRowDelete(appState.activeSheetName, rowIdx);
+    if (sheet[0]) {
+        sheet.push(new Array(sheet[0].length).fill(""));
+    }
+    shiftStylesOnRowDelete(sheetName, rowIdx);
+    shiftRowHeightsOnRowDelete(sheetName, rowIdx);
+    shiftMergesOnRowDelete(sheetName, rowIdx);
+    shiftImagesOnRowDelete(sheetName, rowIdx);
     appState.selectedCell.row = Math.min(rowIdx, sheet.length - 1);
     renderGrid();
     updateCharts();
@@ -3456,11 +3928,20 @@ function deleteActiveRow() {
 
 function deleteActiveCol() {
     const colIdx = appState.selectedCell.col;
-    const sheet = appState.sheets[appState.activeSheetName];
+    const sheetName = appState.activeSheetName;
+    const sheet = appState.sheets[sheetName];
     if (sheet[0].length <= 1) return showToast("Không thể xóa cột duy nhất còn lại", "error");
     pushHistory();
-    sheet.forEach(row => row.splice(colIdx, 1));
-    shiftMergesOnColDelete(appState.activeSheetName, colIdx);
+    updateFormulasOnColDelete(sheetName, colIdx);
+    sheet.forEach(row => {
+        row.splice(colIdx, 1);
+        row.push("");
+    });
+    shiftStylesOnColDelete(sheetName, colIdx);
+    shiftColWidthsOnColDelete(sheetName, colIdx);
+    shiftFiltersOnColDelete(sheetName, colIdx);
+    shiftMergesOnColDelete(sheetName, colIdx);
+    shiftImagesOnColDelete(sheetName, colIdx);
     appState.selectedCell.col = Math.min(colIdx, sheet[0].length - 1);
     renderGrid();
     updateCharts();
