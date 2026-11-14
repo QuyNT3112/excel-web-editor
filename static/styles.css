@@ -1164,6 +1164,7 @@ button, input, select {
     background: var(--excel-green);
     z-index: 100;
     pointer-events: none;
+    box-shadow: 0 0 4px var(--excel-green-glow);
 }
 .resize-guide.col {
     top: 0;

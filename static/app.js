@@ -2210,14 +2210,27 @@ function setupColResize(handle, colIdx) {
         const startX = e.clientX;
         const colLetter = colIndexToLetter(colIdx);
         const colHeader = document.getElementById(`col-header-${colIdx}`);
-        const startWidth = colHeader ? colHeader.offsetWidth : 110;
-        const guide = document.getElementById("col-resize-guide");
+        if (!colHeader) return;
 
+        const ws = document.getElementById("spreadsheet-workspace") || document.body;
+        const startWidth = colHeader.offsetWidth || 110;
+        const guide = document.getElementById("col-resize-guide");
+        if (!guide) return;
+
+        const initialColRect = colHeader.getBoundingClientRect();
+        const initialWsRect = ws.getBoundingClientRect();
+        const initialLineLeft = (initialColRect.left - initialWsRect.left) + startWidth;
+
+        guide.style.left = `${initialLineLeft}px`;
         guide.classList.remove("hidden");
-        guide.style.left = `${e.clientX}px`;
 
         function onMouseMove(moveEvent) {
-            guide.style.left = `${moveEvent.clientX}px`;
+            const delta = moveEvent.clientX - startX;
+            const newWidth = Math.max(30, startWidth + delta);
+            const curColRect = colHeader.getBoundingClientRect();
+            const curWsRect = ws.getBoundingClientRect();
+            const lineLeft = (curColRect.left - curWsRect.left) + newWidth;
+            guide.style.left = `${lineLeft}px`;
         }
 
         function onMouseUp(upEvent) {
@@ -2226,7 +2239,7 @@ function setupColResize(handle, colIdx) {
             guide.classList.add("hidden");
 
             const delta = upEvent.clientX - startX;
-            const newWidth = Math.max(40, startWidth + delta);
+            const newWidth = Math.max(30, startWidth + delta);
 
             pushHistory();
             if (!appState.colWidths[appState.activeSheetName]) appState.colWidths[appState.activeSheetName] = {};
@@ -2247,14 +2260,27 @@ function setupRowResize(handle, rowIdx) {
         const startY = e.clientY;
         const rowHeaderEl = document.getElementById(`row-header-${rowIdx}`);
         const rowDiv = rowHeaderEl ? rowHeaderEl.parentElement : null;
-        const startHeight = rowDiv ? rowDiv.offsetHeight : 26;
-        const guide = document.getElementById("row-resize-guide");
+        if (!rowDiv) return;
 
+        const ws = document.getElementById("spreadsheet-workspace") || document.body;
+        const startHeight = rowDiv.offsetHeight || 26;
+        const guide = document.getElementById("row-resize-guide");
+        if (!guide) return;
+
+        const initialRowRect = rowDiv.getBoundingClientRect();
+        const initialWsRect = ws.getBoundingClientRect();
+        const initialLineTop = (initialRowRect.top - initialWsRect.top) + startHeight;
+
+        guide.style.top = `${initialLineTop}px`;
         guide.classList.remove("hidden");
-        guide.style.top = `${e.clientY}px`;
 
         function onMouseMove(moveEvent) {
-            guide.style.top = `${moveEvent.clientY}px`;
+            const delta = moveEvent.clientY - startY;
+            const newHeight = Math.max(20, startHeight + delta);
+            const curRowRect = rowDiv.getBoundingClientRect();
+            const curWsRect = ws.getBoundingClientRect();
+            const lineTop = (curRowRect.top - curWsRect.top) + newHeight;
+            guide.style.top = `${lineTop}px`;
         }
 
         function onMouseUp(upEvent) {
@@ -2263,7 +2289,7 @@ function setupRowResize(handle, rowIdx) {
             guide.classList.add("hidden");
 
             const delta = upEvent.clientY - startY;
-            const newHeight = Math.max(22, startHeight + delta);
+            const newHeight = Math.max(20, startHeight + delta);
 
             pushHistory();
             if (!appState.rowHeights[appState.activeSheetName]) appState.rowHeights[appState.activeSheetName] = {};
